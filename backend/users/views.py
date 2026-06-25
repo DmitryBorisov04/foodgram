@@ -40,3 +40,12 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
                 return Response({'detail': 'Вы успешно отписались от автора.'}, status=204)
             else:
                 return Response({'detail': 'Вы не подписаны на этого автора.'}, status=400)
+
+
+class SubscriptionListViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        return User.objects.filter(subscriptions__user=user)
