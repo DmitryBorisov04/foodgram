@@ -99,6 +99,7 @@ class Recipe(models.Model):
     def __str__(self):
         return self.name
 
+
 class RecipeTag(models.Model):
     recipe = models.ForeignKey(
         Recipe,
@@ -106,3 +107,18 @@ class RecipeTag(models.Model):
         related_name='recipe_tags',
         verbose_name='Рецепт'
     )
+
+    tag = models.ForeignKey(
+        Tags,
+        on_delete=models.CASCADE,
+        related_name='tag_recipes',
+        verbose_name='Тег'
+    )
+
+    class Meta:
+        unique_together = ('recipe', 'tag')
+        verbose_name = 'Тег рецепта'
+        verbose_name_plural = 'Теги рецепта'
+
+    def __str__(self):
+        return f'Тег {self.tag.name} рецепта {self.recipe.name}'
