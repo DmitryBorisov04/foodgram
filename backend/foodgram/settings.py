@@ -114,6 +114,11 @@ STATIC_URL = '/static/'
 AUTH_USER_MODEL = 'users.User'
 
 REST_FRAMEWORK = {
+
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 6,
+    'PAGE_SIZE_QUERY_PARAM': 'limit',
+
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
     ],
