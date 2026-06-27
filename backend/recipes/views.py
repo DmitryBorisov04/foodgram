@@ -9,6 +9,7 @@ from .models import Ingredients, Tags, Recipe
 from .serializers import (IngredientSerializer, RecipeCreateSerializer,
                           TagSerializer, RecipeSerializer,)
 from .permissions import ISAuthorOrReadOnly
+from .filters import RecipeFilter
 
 
 class IngredientViewSet(viewsets.ReadOnlyModelViewSet):
@@ -27,8 +28,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     permission_classes = [ISAuthorOrReadOnly]
     queryset = Recipe.objects.all()
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['tags', 'author']
-    search_fields = ['^name']
+    filterset_class = RecipeFilter
     ordering = ['-created_at']
 
     def get_serializer_class(self):
@@ -36,6 +36,3 @@ class RecipeViewSet(viewsets.ModelViewSet):
             return RecipeCreateSerializer
         else:
             return RecipeSerializer
-
-    def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
