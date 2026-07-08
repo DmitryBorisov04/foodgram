@@ -2,12 +2,12 @@ from django.db import models
 from users.models import User
 
 
-class Ingredients(models.Model):
+class Ingredient(models.Model):
     name = models.CharField(
         max_length=200,
         verbose_name='Название ингредиента'
     )
-    unit = models.CharField(
+    measurement_unit = models.CharField(
         max_length=100,
         verbose_name='Единица измерения'
     )
@@ -16,7 +16,7 @@ class Ingredients(models.Model):
         return self.name
 
 
-class Tags(models.Model):
+class Tag(models.Model):
     name = models.CharField(
         max_length=100,
         verbose_name='Название тега'
@@ -38,7 +38,7 @@ class RecipeIngredient(models.Model):
         verbose_name='Рецепт'
     )
     ingredient = models.ForeignKey(
-        Ingredients,
+        Ingredient,
         on_delete=models.CASCADE,
         related_name='ingredient_recipes',
         verbose_name='Ингредиент'
@@ -54,7 +54,7 @@ class RecipeIngredient(models.Model):
         verbose_name_plural = 'Ингредиенты рецепта'
 
     def __str__(self):
-        return f'{self.amount} {self.ingredient.unit} {self.ingredient.name} в {self.recipe.name}'
+        return f'{self.amount} {self.ingredient.measurement_unit} {self.ingredient.name} в {self.recipe.name}'
 
 
 class Recipe(models.Model):
@@ -68,6 +68,13 @@ class Recipe(models.Model):
         on_delete=models.CASCADE,
         related_name='recipes',
         verbose_name='Автор рецепта'
+    )
+
+    tags = models.ManyToManyField(
+        Tag,
+        through='RecipeTag',
+        related_name='recipes',
+        verbose_name='Теги'
     )
 
     text = models.TextField(
@@ -85,7 +92,7 @@ class Recipe(models.Model):
     )
 
     ingredients = models.ManyToManyField(
-        Ingredients,
+        Ingredient,
         through='RecipeIngredient',
         related_name='recipes',
         verbose_name='Ингредиенты'
@@ -109,7 +116,7 @@ class RecipeTag(models.Model):
     )
 
     tag = models.ForeignKey(
-        Tags,
+        Tag,
         on_delete=models.CASCADE,
         related_name='tag_recipes',
         verbose_name='Тег'

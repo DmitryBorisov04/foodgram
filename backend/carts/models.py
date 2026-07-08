@@ -24,6 +24,7 @@ class Favorite(models.Model):
     def __str__(self):
         return f'{self.user.username} добавил {self.recipe.name} в избранное'
 
+
 class ShoppingCart(models.Model):
     user = models.ForeignKey(
         'users.User',
@@ -44,4 +45,4 @@ class ShoppingCart(models.Model):
         verbose_name_plural = 'Рецепты в корзине'
 
     def __str__(self):
-        return f'{self.user.username} добавил {self.recipe.name} в корзину'   
+        return f'{self.user.username} добавил {self.recipe.name} в корзину'
