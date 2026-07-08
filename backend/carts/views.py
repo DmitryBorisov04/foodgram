@@ -1,13 +1,14 @@
-from django.shortcuts import get_object_or_404
 from django.db.models import Sum
 from django.http import HttpResponse
-from rest_framework import viewsets, status
+from django.shortcuts import get_object_or_404
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Favorite, ShoppingCart
 from recipes.models import Recipe
+
+from .models import Favorite, ShoppingCart
 
 
 class FavoriteViewSet(viewsets.ViewSet):
@@ -18,19 +19,30 @@ class FavoriteViewSet(viewsets.ViewSet):
         recipe = get_object_or_404(Recipe, pk=pk)
 
         if recipe.author == request.user:
-            return Response({"errors": "Вы не можете добавить свой рецепт в избранное."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    'errors': (
+                        'Вы не можете добавить свой рецепт в избранное.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if request.method == 'POST':
-            Favorite.objects.get_or_create(user=request.user, recipe=recipe)
+            Favorite.objects.get_or_create(
+                user=request.user,
+                recipe=recipe,
+            )
             return Response(status=status.HTTP_201_CREATED)
 
-        # DELETE
-        deleted = Favorite.objects.filter(
-            user=request.user, recipe=recipe).delete()
-        if deleted[0] > 0:
+        deleted_count, _ = Favorite.objects.filter(
+            user=request.user,
+            recipe=recipe,
+        ).delete()
+
+        if deleted_count > 0:
             return Response(status=status.HTTP_204_NO_CONTENT)
-        # если не было в избранном
+
         return Response(status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -42,19 +54,31 @@ class ShoppingCartViewSet(viewsets.ViewSet):
         recipe = get_object_or_404(Recipe, pk=pk)
 
         if recipe.author == request.user:
-            return Response({"errors": "Вы не можете добавить свой рецепт в список покупок."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    'errors': (
+                        'Вы не можете добавить свой рецепт '
+                        'в список покупок.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if request.method == 'POST':
             ShoppingCart.objects.get_or_create(
-                user=request.user, recipe=recipe)
+                user=request.user,
+                recipe=recipe,
+            )
             return Response(status=status.HTTP_201_CREATED)
 
-        # DELETE
-        deleted = ShoppingCart.objects.filter(
-            user=request.user, recipe=recipe).delete()
-        if deleted[0] > 0:
+        deleted_count, _ = ShoppingCart.objects.filter(
+            user=request.user,
+            recipe=recipe,
+        ).delete()
+
+        if deleted_count > 0:
             return Response(status=status.HTTP_204_NO_CONTENT)
+
         return Response(status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -66,19 +90,30 @@ class ShoppingCartDownload(viewsets.ViewSet):
         cart_items = ShoppingCart.objects.filter(user=request.user)
 
         if not cart_items.exists():
-            return Response({"errors": "Список покупок пуст."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'errors': 'Список покупок пуст.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         ingredients = cart_items.values(
             'recipe__recipe_ingredients__ingredient__name',
-            'recipe__recipe_ingredients__ingredient__measurement_unit'
-        ).annotate(total_amount=Sum('recipe__recipe_ingredients__amount'))
+            'recipe__recipe_ingredients__ingredient__measurement_unit',
+        ).annotate(
+            total_amount=Sum('recipe__recipe_ingredients__amount')
+        )
 
-        text = "Список покупок:\n\n"
+        text = 'Список покупок:\n\n'
+
         for item in ingredients:
-            text += f"{item['recipe__recipe_ingredients__ingredient__name']} "
-            text += f"({item['recipe__recipe_ingredients__ingredient__measurement_unit']}) — "
-            text += f"{item['total_amount']}\n"
+            name = item['recipe__recipe_ingredients__ingredient__name']
+            unit = item[
+                'recipe__recipe_ingredients__ingredient__measurement_unit'
+            ]
+            amount = item['total_amount']
+            text += f'{name} ({unit}) — {amount}\n'
 
         response = HttpResponse(text, content_type='text/plain')
-        response['Content-Disposition'] = 'attachment; filename="shopping_list.txt"'
+        response['Content-Disposition'] = (
+            'attachment; filename="shopping_list.txt"'
+        )
         return response

@@ -86,9 +86,11 @@ class CustomUserViewSet(DjoserUserViewSet):
             return User.objects.filter(id=self.request.user.id)
         return User.objects.all().order_by('id')
 
-    @action(detail=False, methods=('get',), permission_classes=(IsAuthenticated,))
+    @action(detail=False, methods=('get',),
+            permission_classes=(IsAuthenticated,))
     def subscriptions(self, request):
-        queryset = User.objects.filter(subscribers__user=request.user).order_by('id')
+        queryset = User.objects.filter(
+            subscribers__user=request.user).order_by('id')
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = SubscriptionUserSerializer(

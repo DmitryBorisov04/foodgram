@@ -9,6 +9,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from carts.models import Favorite, ShoppingCart
+
 from .filters import RecipeFilter
 from .models import Ingredient, Recipe, Tag
 from .permissions import ISAuthorOrReadOnly
@@ -92,9 +93,14 @@ class RecipeViewSet(viewsets.ModelViewSet):
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        deleted, _ = Favorite.objects.filter(user=user, recipe=recipe).delete()
+        deleted, _ = Favorite.objects.filter(
+            user=user,
+            recipe=recipe,
+        ).delete()
+
         if deleted:
             return Response(status=status.HTTP_204_NO_CONTENT)
+
         return Response(
             {'errors': 'Рецепта не было в избранном.'},
             status=status.HTTP_400_BAD_REQUEST,
@@ -129,8 +135,10 @@ class RecipeViewSet(viewsets.ModelViewSet):
             user=user,
             recipe=recipe,
         ).delete()
+
         if deleted:
             return Response(status=status.HTTP_204_NO_CONTENT)
+
         return Response(
             {'errors': 'Рецепта не было в списке покупок.'},
             status=status.HTTP_400_BAD_REQUEST,
@@ -143,6 +151,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     )
     def download_shopping_cart(self, request):
         cart_items = ShoppingCart.objects.filter(user=request.user)
+
         if not cart_items.exists():
             return Response(
                 {'errors': 'Список покупок пуст.'},
@@ -157,13 +166,17 @@ class RecipeViewSet(viewsets.ModelViewSet):
         )
 
         text = 'Список покупок:\n\n'
+
         for item in ingredients:
-            text += (
-                f"{item['recipe__recipe_ingredients__ingredient__name']} "
-                f"({item['recipe__recipe_ingredients__ingredient__measurement_unit']}) — "
-                f"{item['total_amount']}\n"
-            )
+            name = item['recipe__recipe_ingredients__ingredient__name']
+            unit = item[
+                'recipe__recipe_ingredients__ingredient__measurement_unit'
+            ]
+            amount = item['total_amount']
+            text += f'{name} ({unit}) — {amount}\n'
 
         response = HttpResponse(text, content_type='text/plain')
-        response['Content-Disposition'] = 'attachment; filename="shopping_list.txt"'
+        response['Content-Disposition'] = (
+            'attachment; filename="shopping_list.txt"'
+        )
         return response

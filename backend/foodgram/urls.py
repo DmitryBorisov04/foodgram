@@ -17,5 +17,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
 
     path('api/users/<int:pk>/subscribe/',
-         SubscriptionViewSet.as_view({'post': 'subscribe', 'delete': 'subscribe'})),
+         SubscriptionViewSet.as_view(
+             {'post': 'subscribe', 'delete': 'subscribe'})
+         ),
 ]
