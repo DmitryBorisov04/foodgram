@@ -138,5 +138,6 @@ dmypy.json
 .idea
 .vscode
 
-static/
-media/
+backend/staticfiles/
+backend/media/
+backend/db.sqlite3backend/avatar/

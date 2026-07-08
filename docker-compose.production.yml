@@ -1,0 +1,44 @@
+version: '3.8'
+
+volumes:
+  pg_data:
+  static:
+  media:
+  frontend_static:
+
+services:
+  db:
+    image: postgres:13.10
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: always
+
+  backend:
+    image: ${DOCKERHUB_USERNAME}/foodgram_backend:latest
+    env_file: .env
+    depends_on:
+      - db
+    volumes:
+      - static:/backend_static
+      - media:/app/media
+    restart: always
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/foodgram_frontend:latest
+    volumes:
+      - frontend_static:/frontend_static
+    restart: "no"
+
+  gateway:
+    image: ${DOCKERHUB_USERNAME}/foodgram_gateway:latest
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+    volumes:
+      - static:/static
+      - media:/media
+      - frontend_static:/usr/share/nginx/html
+    restart: always
