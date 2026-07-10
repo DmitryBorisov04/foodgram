@@ -1,0 +1,3775 @@
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/.env.example work_backend/backend/.env.example
+--- orig_backend/backend/.env.example	2026-07-08 18:57:00.000000000 +0000
++++ work_backend/backend/.env.example	2026-07-09 08:55:02.511172289 +0000
+@@ -1,10 +1,10 @@
+-SECRET_KEY=replace-me
+-DEBUG=False
+-ALLOWED_HOSTS=localhost,127.0.0.1,your-domain.com,your-server-ip
+-CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,https://your-domain.com
+-
+-POSTGRES_DB=foodgram
+-POSTGRES_USER=foodgram_user
+-POSTGRES_PASSWORD=foodgram_password
+-DB_HOST=db
+-DB_PORT=5432
+\ No newline at end of file
++SECRET_KEY=replace-me
++DEBUG=False
++ALLOWED_HOSTS=localhost,127.0.0.1,your-domain.com,your-server-ip
++CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,https://your-domain.com
++
++POSTGRES_DB=foodgram
++POSTGRES_USER=foodgram_user
++POSTGRES_PASSWORD=foodgram_password
++DB_HOST=db
++DB_PORT=5432
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/apps.py work_backend/backend/api/apps.py
+--- orig_backend/backend/api/apps.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/apps.py	2026-07-09 08:55:02.508468263 +0000
+@@ -0,0 +1,6 @@
++from django.apps import AppConfig
++
++
++class ApiConfig(AppConfig):
++    default_auto_field = 'django.db.models.BigAutoField'
++    name = 'api'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/filters.py work_backend/backend/api/filters.py
+--- orig_backend/backend/api/filters.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/filters.py	2026-07-09 08:55:02.509507069 +0000
+@@ -0,0 +1,36 @@
++from django_filters import rest_framework as filters
++
++from recipes.models import Recipe, Tag
++
++
++class RecipeFilter(filters.FilterSet):
++    tags = filters.ModelMultipleChoiceFilter(
++        field_name='tags__slug',
++        to_field_name='slug',
++        queryset=Tag.objects.all(),
++    )
++    is_favorited = filters.BooleanFilter(method='filter_is_favorited')
++    is_in_shopping_cart = filters.BooleanFilter(
++        method='filter_is_in_shopping_cart'
++    )
++    author = filters.NumberFilter(field_name='author__id')
++
++    class Meta:
++        model = Recipe
++        fields = ('tags', 'author', 'is_favorited', 'is_in_shopping_cart')
++
++    def filter_is_favorited(self, queryset, name, value):
++        user = self.request.user
++        if not user.is_authenticated:
++            return queryset.none() if value else queryset
++        if value:
++            return queryset.filter(favorites__user=user)
++        return queryset
++
++    def filter_is_in_shopping_cart(self, queryset, name, value):
++        user = self.request.user
++        if not user.is_authenticated:
++            return queryset.none() if value else queryset
++        if value:
++            return queryset.filter(shopping_cart__user=user)
++        return queryset
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/permissions.py work_backend/backend/api/permissions.py
+--- orig_backend/backend/api/permissions.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/permissions.py	2026-07-09 08:55:02.509456683 +0000
+@@ -0,0 +1,13 @@
++from rest_framework import permissions
++
++
++class IsAuthorOrReadOnly(permissions.BasePermission):
++    def has_permission(self, request, view):
++        if request.method in permissions.SAFE_METHODS:
++            return True
++        return request.user.is_authenticated and request.user.is_active
++
++    def has_object_permission(self, request, view, obj):
++        if request.method in permissions.SAFE_METHODS:
++            return True
++        return obj.author == request.user
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/serializers.py work_backend/backend/api/serializers.py
+--- orig_backend/backend/api/serializers.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/serializers.py	2026-07-09 08:55:02.509785513 +0000
+@@ -0,0 +1,283 @@
++import base64
++import binascii
++
++from django.core.files.base import ContentFile
++from djoser.serializers import (
++    UserCreateSerializer as DjoserUserCreateSerializer,
++)
++from djoser.serializers import UserSerializer as DjoserUserSerializer
++from rest_framework import serializers
++
++from recipes.models import (
++    Favorite,
++    Product,
++    Recipe,
++    RecipeProduct,
++    ShoppingCart,
++    Tag,
++    User,
++)
++
++
++class Base64ImageField(serializers.ImageField):
++    def to_internal_value(self, data):
++        if isinstance(data, str) and ';base64,' in data:
++            try:
++                file_format, imgstr = data.split(';base64,')
++                ext = file_format.split('/')[-1]
++                data = ContentFile(
++                    base64.b64decode(imgstr),
++                    name=f'image.{ext}',
++                )
++            except (TypeError, ValueError, binascii.Error):
++                raise serializers.ValidationError(
++                    'Некорректный формат изображения.'
++                )
++        return super().to_internal_value(data)
++
++
++class UserSerializer(DjoserUserSerializer):
++    is_subscribed = serializers.SerializerMethodField()
++
++    class Meta:
++        model = User
++        fields = (
++            'id',
++            'username',
++            'first_name',
++            'last_name',
++            'email',
++            'is_subscribed',
++            'avatar',
++        )
++
++    def get_is_subscribed(self, obj):
++        request = self.context.get('request')
++        if request and request.user.is_authenticated:
++            return obj.subscribers.filter(user=request.user).exists()
++        return False
++
++
++class UserCreateSerializer(DjoserUserCreateSerializer):
++    first_name = serializers.CharField(required=True, max_length=150)
++    last_name = serializers.CharField(required=True, max_length=150)
++
++    class Meta:
++        model = User
++        fields = (
++            'id',
++            'email',
++            'username',
++            'first_name',
++            'last_name',
++            'password',
++        )
++        extra_kwargs = {'password': {'write_only': True}}
++
++
++class AvatarSerializer(serializers.ModelSerializer):
++    avatar = Base64ImageField(required=True, allow_null=False)
++
++    class Meta:
++        model = User
++        fields = ('avatar',)
++
++
++class ProductSerializer(serializers.ModelSerializer):
++    class Meta:
++        model = Product
++        fields = ('id', 'name', 'measurement_unit')
++
++
++class TagSerializer(serializers.ModelSerializer):
++    class Meta:
++        model = Tag
++        fields = ('id', 'name', 'slug')
++
++
++class RecipeProductSerializer(serializers.ModelSerializer):
++    id = serializers.IntegerField(source='product.id')
++    name = serializers.CharField(source='product.name')
++    measurement_unit = serializers.CharField(
++        source='product.measurement_unit'
++    )
++
++    class Meta:
++        model = RecipeProduct
++        fields = ('id', 'name', 'measurement_unit', 'amount')
++
++
++class RecipeShortSerializer(serializers.ModelSerializer):
++    class Meta:
++        model = Recipe
++        fields = ('id', 'name', 'image', 'cooking_time')
++
++
++class RecipeReadSerializer(serializers.ModelSerializer):
++    author = UserSerializer(read_only=True)
++    ingredients = RecipeProductSerializer(
++        many=True,
++        read_only=True,
++        source='recipe_products',
++    )
++    tags = TagSerializer(many=True, read_only=True)
++    is_favorited = serializers.SerializerMethodField()
++    is_in_shopping_cart = serializers.SerializerMethodField()
++
++    class Meta:
++        model = Recipe
++        fields = (
++            'id',
++            'tags',
++            'author',
++            'ingredients',
++            'is_favorited',
++            'is_in_shopping_cart',
++            'name',
++            'image',
++            'text',
++            'cooking_time',
++        )
++
++    def get_is_favorited(self, obj):
++        request = self.context.get('request')
++        if request and request.user.is_authenticated:
++            return Favorite.objects.filter(
++                user=request.user,
++                recipe=obj,
++            ).exists()
++        return False
++
++    def get_is_in_shopping_cart(self, obj):
++        request = self.context.get('request')
++        if request and request.user.is_authenticated:
++            return ShoppingCart.objects.filter(
++                user=request.user,
++                recipe=obj,
++            ).exists()
++        return False
++
++
++class ProductAmountSerializer(serializers.Serializer):
++    id = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
++    amount = serializers.IntegerField(min_value=1)
++
++
++class RecipeWriteSerializer(serializers.ModelSerializer):
++    ingredients = ProductAmountSerializer(many=True)
++    tags = serializers.PrimaryKeyRelatedField(
++        many=True,
++        queryset=Tag.objects.all(),
++    )
++    image = Base64ImageField(required=True, allow_null=False)
++    cooking_time = serializers.IntegerField(min_value=1)
++
++    class Meta:
++        model = Recipe
++        fields = (
++            'ingredients',
++            'tags',
++            'image',
++            'name',
++            'text',
++            'cooking_time',
++        )
++
++    def validate_ingredients(self, value):
++        if not value:
++            raise serializers.ValidationError(
++                'Список продуктов не может быть пустым.'
++            )
++        product_ids = [item['id'].id for item in value]
++        if len(product_ids) != len(set(product_ids)):
++            raise serializers.ValidationError(
++                'Продукты не должны повторяться.'
++            )
++        return value
++
++    def validate_tags(self, value):
++        if not value:
++            raise serializers.ValidationError(
++                'Список тегов не может быть пустым.'
++            )
++        tag_ids = [tag.id for tag in value]
++        if len(tag_ids) != len(set(tag_ids)):
++            raise serializers.ValidationError('Теги не должны повторяться.')
++        return value
++
++    def validate(self, attrs):
++        if self.instance is not None:
++            for field in ('ingredients', 'tags'):
++                if field not in self.initial_data:
++                    raise serializers.ValidationError(
++                        {field: 'Это поле обязательно.'}
++                    )
++        return attrs
++
++    @staticmethod
++    def create_products(recipe, products_data):
++        RecipeProduct.objects.bulk_create(
++            RecipeProduct(
++                recipe=recipe,
++                product=product_data['id'],
++                amount=product_data['amount'],
++            )
++            for product_data in products_data
++        )
++
++    def create(self, validated_data):
++        products_data = validated_data.pop('ingredients')
++        tags_data = validated_data.pop('tags')
++        recipe = Recipe.objects.create(
++            author=self.context['request'].user,
++            **validated_data,
++        )
++        self.create_products(recipe, products_data)
++        recipe.tags.set(tags_data)
++        return recipe
++
++    def update(self, instance, validated_data):
++        products_data = validated_data.pop('ingredients', None)
++        tags_data = validated_data.pop('tags', None)
++
++        for attr, value in validated_data.items():
++            setattr(instance, attr, value)
++        instance.save()
++
++        if tags_data is not None:
++            instance.tags.set(tags_data)
++        if products_data is not None:
++            instance.recipe_products.all().delete()
++            self.create_products(instance, products_data)
++
++        return instance
++
++    def to_representation(self, instance):
++        return RecipeReadSerializer(instance, context=self.context).data
++
++
++class SubscriptionUserSerializer(UserSerializer):
++    recipes = serializers.SerializerMethodField()
++    recipes_count = serializers.SerializerMethodField()
++
++    class Meta(UserSerializer.Meta):
++        fields = UserSerializer.Meta.fields + ('recipes', 'recipes_count')
++
++    def get_recipes_count(self, obj):
++        return obj.recipes.count()
++
++    def get_recipes(self, obj):
++        request = self.context.get('request')
++        recipes = obj.recipes.all()
++        if request:
++            recipes_limit = request.query_params.get('recipes_limit')
++            if recipes_limit:
++                try:
++                    recipes = recipes[:int(recipes_limit)]
++                except (TypeError, ValueError):
++                    pass
++        return RecipeShortSerializer(
++            recipes,
++            many=True,
++            context=self.context,
++        ).data
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/urls.py work_backend/backend/api/urls.py
+--- orig_backend/backend/api/urls.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/urls.py	2026-07-09 08:55:02.510242237 +0000
+@@ -0,0 +1,15 @@
++from django.urls import include, path
++from rest_framework.routers import DefaultRouter
++
++from .views import ProductViewSet, RecipeViewSet, TagViewSet, UserViewSet
++
++router = DefaultRouter()
++router.register('users', UserViewSet, basename='users')
++router.register('ingredients', ProductViewSet, basename='ingredients')
++router.register('tags', TagViewSet, basename='tags')
++router.register('recipes', RecipeViewSet, basename='recipes')
++
++urlpatterns = [
++    path('auth/', include('djoser.urls.authtoken')),
++    path('', include(router.urls)),
++]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/api/views.py work_backend/backend/api/views.py
+--- orig_backend/backend/api/views.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/api/views.py	2026-07-09 08:55:51.957334526 +0000
+@@ -0,0 +1,300 @@
++from django.db.models import Sum
++from django.http import HttpResponse
++from django.shortcuts import get_object_or_404
++from django_filters.rest_framework import DjangoFilterBackend
++from djoser.views import UserViewSet as DjoserUserViewSet
++from rest_framework import status, viewsets
++from rest_framework.decorators import action
++from rest_framework.filters import SearchFilter
++from rest_framework.permissions import AllowAny, IsAuthenticated
++from rest_framework.response import Response
++
++from recipes.models import (
++    Favorite,
++    Product,
++    Recipe,
++    ShoppingCart,
++    Subscription,
++    Tag,
++    User,
++)
++
++from .filters import RecipeFilter
++from .permissions import IsAuthorOrReadOnly
++from .serializers import (
++    AvatarSerializer,
++    ProductSerializer,
++    RecipeReadSerializer,
++    RecipeShortSerializer,
++    RecipeWriteSerializer,
++    SubscriptionUserSerializer,
++    TagSerializer,
++    UserCreateSerializer,
++    UserSerializer,
++)
++
++
++class UserViewSet(DjoserUserViewSet):
++    queryset = User.objects.all().order_by('id')
++    serializer_class = UserSerializer
++
++    def get_permissions(self):
++        if self.action in ('list', 'retrieve'):
++            return (AllowAny(),)
++        if self.action in (
++            'me',
++            'avatar',
++            'set_password',
++            'subscriptions',
++            'subscribe',
++        ):
++            return (IsAuthenticated(),)
++        return super().get_permissions()
++
++    def get_serializer_class(self):
++        if self.action == 'create':
++            return UserCreateSerializer
++        if self.action == 'avatar':
++            return AvatarSerializer
++        if self.action == 'subscriptions':
++            return SubscriptionUserSerializer
++        if self.action in ('list', 'retrieve', 'me'):
++            return UserSerializer
++        return super().get_serializer_class()
++
++    @action(detail=False, methods=('get',))
++    def subscriptions(self, request):
++        queryset = User.objects.filter(
++            subscribers__user=request.user,
++        ).order_by('id')
++        page = self.paginate_queryset(queryset)
++        if page is not None:
++            serializer = SubscriptionUserSerializer(
++                page,
++                many=True,
++                context={'request': request},
++            )
++            return self.get_paginated_response(serializer.data)
++
++        serializer = SubscriptionUserSerializer(
++            queryset,
++            many=True,
++            context={'request': request},
++        )
++        return Response(serializer.data)
++
++    @action(detail=True, methods=('post', 'delete'))
++    def subscribe(self, request, pk=None, id=None):
++        user = request.user
++        author = get_object_or_404(User, id=id or pk)
++
++        if user == author:
++            return Response(
++                {'errors': 'Нельзя подписаться на самого себя.'},
++                status=status.HTTP_400_BAD_REQUEST,
++            )
++
++        if request.method == 'POST':
++            _, created = Subscription.objects.get_or_create(
++                user=user,
++                author=author,
++            )
++            if not created:
++                return Response(
++                    {'errors': 'Вы уже подписаны на этого пользователя.'},
++                    status=status.HTTP_400_BAD_REQUEST,
++                )
++            serializer = SubscriptionUserSerializer(
++                author,
++                context={'request': request},
++            )
++            return Response(serializer.data, status=status.HTTP_201_CREATED)
++
++        deleted, _ = Subscription.objects.filter(
++            user=user,
++            author=author,
++        ).delete()
++        if deleted:
++            return Response(status=status.HTTP_204_NO_CONTENT)
++        return Response(
++            {'errors': 'Вы не были подписаны на этого пользователя.'},
++            status=status.HTTP_400_BAD_REQUEST,
++        )
++
++    @action(detail=False, methods=('put', 'delete'), url_path='me/avatar')
++    def avatar(self, request):
++        user = request.user
++
++        if request.method == 'PUT':
++            serializer = self.get_serializer(user, data=request.data)
++            serializer.is_valid(raise_exception=True)
++            serializer.save()
++            return Response(serializer.data)
++
++        if user.avatar:
++            user.avatar.delete(save=True)
++        return Response(status=status.HTTP_204_NO_CONTENT)
++
++
++class ProductViewSet(viewsets.ReadOnlyModelViewSet):
++    queryset = Product.objects.all()
++    serializer_class = ProductSerializer
++    filter_backends = (SearchFilter,)
++    search_fields = ('^name',)
++    pagination_class = None
++
++    def get_queryset(self):
++        queryset = super().get_queryset()
++        name = self.request.query_params.get('name')
++        if name:
++            queryset = queryset.filter(name__istartswith=name)
++        return queryset
++
++
++class TagViewSet(viewsets.ReadOnlyModelViewSet):
++    queryset = Tag.objects.all()
++    serializer_class = TagSerializer
++    pagination_class = None
++
++
++class RecipeViewSet(viewsets.ModelViewSet):
++    permission_classes = (IsAuthorOrReadOnly,)
++    queryset = Recipe.objects.select_related('author').prefetch_related(
++        'tags',
++        'recipe_products__product',
++    )
++    filter_backends = (DjangoFilterBackend,)
++    filterset_class = RecipeFilter
++
++    def get_serializer_class(self):
++        if self.action in ('create', 'update', 'partial_update'):
++            return RecipeWriteSerializer
++        return RecipeReadSerializer
++
++    @action(
++        detail=True,
++        methods=('get',),
++        url_path='get-link',
++        permission_classes=(AllowAny,),
++    )
++    def get_link(self, request, pk=None):
++        recipe = self.get_object()
++        short_link = request.build_absolute_uri(f'/s/{recipe.id}/')
++        return Response({'short-link': short_link})
++
++    @action(
++        detail=True,
++        methods=('post', 'delete'),
++        permission_classes=(IsAuthenticated,),
++    )
++    def favorite(self, request, pk=None):
++        recipe = self.get_object()
++        return self.create_or_delete_relation(
++            model=Favorite,
++            request=request,
++            recipe=recipe,
++            exists_message='Рецепт уже в избранном.',
++            missing_message='Рецепта не было в избранном.',
++        )
++
++    @action(
++        detail=True,
++        methods=('post', 'delete'),
++        permission_classes=(IsAuthenticated,),
++    )
++    def shopping_cart(self, request, pk=None):
++        recipe = self.get_object()
++        return self.create_or_delete_relation(
++            model=ShoppingCart,
++            request=request,
++            recipe=recipe,
++            exists_message='Рецепт уже в списке покупок.',
++            missing_message='Рецепта не было в списке покупок.',
++        )
++
++    @staticmethod
++    def create_or_delete_relation(
++        model,
++        request,
++        recipe,
++        exists_message,
++        missing_message,
++    ):
++        if request.method == 'POST':
++            _, created = model.objects.get_or_create(
++                user=request.user,
++                recipe=recipe,
++            )
++            if not created:
++                return Response(
++                    {'errors': exists_message},
++                    status=status.HTTP_400_BAD_REQUEST,
++                )
++            serializer = RecipeShortSerializer(
++                recipe,
++                context={'request': request},
++            )
++            return Response(serializer.data, status=status.HTTP_201_CREATED)
++
++        deleted, _ = model.objects.filter(
++            user=request.user,
++            recipe=recipe,
++        ).delete()
++        if deleted:
++            return Response(status=status.HTTP_204_NO_CONTENT)
++        return Response(
++            {'errors': missing_message},
++            status=status.HTTP_400_BAD_REQUEST,
++        )
++
++    @action(
++        detail=False,
++        methods=('get',),
++        permission_classes=(IsAuthenticated,),
++    )
++    def download_shopping_cart(self, request):
++        cart_items = ShoppingCart.objects.filter(
++            user=request.user,
++        ).select_related('recipe', 'recipe__author')
++
++        if not cart_items.exists():
++            return Response(
++                {'errors': 'Список покупок пуст.'},
++                status=status.HTTP_400_BAD_REQUEST,
++            )
++
++        products = Product.objects.filter(
++            recipe_products__recipe__shopping_cart__user=request.user,
++        ).values(
++            'name',
++            'measurement_unit',
++        ).annotate(
++            total_amount=Sum('recipe_products__amount'),
++        ).order_by('name')
++
++        lines = [
++            f'Список покупок для {request.user.get_full_name()}',
++            '',
++            'Рецепты:',
++        ]
++        for index, item in enumerate(cart_items, start=1):
++            lines.append(
++                f'{index}. {item.recipe.name} '
++                f'({item.recipe.cooking_time} мин.)'
++            )
++
++        lines.extend(['', 'Продукты:'])
++        for index, product in enumerate(products, start=1):
++            name = product['name']
++            unit = product['measurement_unit']
++            amount = product['total_amount']
++            lines.append(f'{index}. {name} ({unit}) — {amount}')
++
++        response = HttpResponse(
++            '\n'.join(lines),
++            content_type='text/plain; charset=utf-8',
++        )
++        response['Content-Disposition'] = (
++            'attachment; filename="shopping_list.txt"'
++        )
++        return response
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/admin.py work_backend/backend/carts/admin.py
+--- orig_backend/backend/carts/admin.py	2026-06-29 11:35:14.000000000 +0000
++++ work_backend/backend/carts/admin.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,5 +0,0 @@
+-from django.contrib import admin
+-from .models import Favorite, ShoppingCart
+-
+-admin.site.register(Favorite)
+-admin.site.register(ShoppingCart)
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/apps.py work_backend/backend/carts/apps.py
+--- orig_backend/backend/carts/apps.py	2026-06-17 18:54:42.000000000 +0000
++++ work_backend/backend/carts/apps.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,5 +0,0 @@
+-from django.apps import AppConfig
+-
+-
+-class CartsConfig(AppConfig):
+-    name = 'carts'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/migrations/0001_initial.py work_backend/backend/carts/migrations/0001_initial.py
+--- orig_backend/backend/carts/migrations/0001_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/carts/migrations/0001_initial.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,34 +0,0 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-    ]
+-
+-    operations = [
+-        migrations.CreateModel(
+-            name='Favorite',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-            ],
+-            options={
+-                'verbose_name': 'Избранный рецепт',
+-                'verbose_name_plural': 'Избранные рецепты',
+-            },
+-        ),
+-        migrations.CreateModel(
+-            name='ShoppingCart',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-            ],
+-            options={
+-                'verbose_name': 'Рецепт в корзине',
+-                'verbose_name_plural': 'Рецепты в корзине',
+-            },
+-        ),
+-    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/migrations/0002_initial.py work_backend/backend/carts/migrations/0002_initial.py
+--- orig_backend/backend/carts/migrations/0002_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/carts/migrations/0002_initial.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,22 +0,0 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-import django.db.models.deletion
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-        ('carts', '0001_initial'),
+-        ('recipes', '0001_initial'),
+-    ]
+-
+-    operations = [
+-        migrations.AddField(
+-            model_name='favorite',
+-            name='recipe',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='favorites', to='recipes.recipe', verbose_name='Рецепт'),
+-        ),
+-    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/migrations/0003_initial.py work_backend/backend/carts/migrations/0003_initial.py
+--- orig_backend/backend/carts/migrations/0003_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/carts/migrations/0003_initial.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,42 +0,0 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-import django.db.models.deletion
+-from django.conf import settings
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-        ('carts', '0002_initial'),
+-        ('recipes', '0001_initial'),
+-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+-    ]
+-
+-    operations = [
+-        migrations.AddField(
+-            model_name='favorite',
+-            name='user',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='favorite_recipes', to=settings.AUTH_USER_MODEL, verbose_name='Пользователь'),
+-        ),
+-        migrations.AddField(
+-            model_name='shoppingcart',
+-            name='recipe',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='shopping_cart', to='recipes.recipe', verbose_name='Рецепт'),
+-        ),
+-        migrations.AddField(
+-            model_name='shoppingcart',
+-            name='user',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='cart_recipes', to=settings.AUTH_USER_MODEL, verbose_name='Пользователь'),
+-        ),
+-        migrations.AlterUniqueTogether(
+-            name='favorite',
+-            unique_together={('user', 'recipe')},
+-        ),
+-        migrations.AlterUniqueTogether(
+-            name='shoppingcart',
+-            unique_together={('user', 'recipe')},
+-        ),
+-    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/models.py work_backend/backend/carts/models.py
+--- orig_backend/backend/carts/models.py	2026-07-08 19:02:36.000000000 +0000
++++ work_backend/backend/carts/models.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,47 +0,0 @@
+-from django.db import models
+-
+-
+-class Favorite(models.Model):
+-    user = models.ForeignKey(
+-        'users.User',
+-        on_delete=models.CASCADE,
+-        related_name='favorite_recipes',
+-        verbose_name='Пользователь'
+-    )
+-    recipe = models.ForeignKey(
+-        'recipes.Recipe',
+-        on_delete=models.CASCADE,
+-        related_name='favorites',
+-        verbose_name='Рецепт'
+-    )
+-
+-    class Meta:
+-        unique_together = ('user', 'recipe')
+-        verbose_name = 'Избранный рецепт'
+-        verbose_name_plural = 'Избранные рецепты'
+-
+-    def __str__(self):
+-        return f'{self.user.username} добавил {self.recipe.name} в избранное'
+-
+-
+-class ShoppingCart(models.Model):
+-    user = models.ForeignKey(
+-        'users.User',
+-        on_delete=models.CASCADE,
+-        related_name='cart_recipes',
+-        verbose_name='Пользователь'
+-    )
+-    recipe = models.ForeignKey(
+-        'recipes.Recipe',
+-        on_delete=models.CASCADE,
+-        related_name='shopping_cart',
+-        verbose_name='Рецепт'
+-    )
+-
+-    class Meta:
+-        unique_together = ('user', 'recipe')
+-        verbose_name = 'Рецепт в корзине'
+-        verbose_name_plural = 'Рецепты в корзине'
+-
+-    def __str__(self):
+-        return f'{self.user.username} добавил {self.recipe.name} в корзину'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/carts/views.py work_backend/backend/carts/views.py
+--- orig_backend/backend/carts/views.py	2026-07-08 20:39:40.000000000 +0000
++++ work_backend/backend/carts/views.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,119 +0,0 @@
+-from django.db.models import Sum
+-from django.http import HttpResponse
+-from django.shortcuts import get_object_or_404
+-from rest_framework import status, viewsets
+-from rest_framework.decorators import action
+-from rest_framework.permissions import IsAuthenticated
+-from rest_framework.response import Response
+-
+-from recipes.models import Recipe
+-
+-from .models import Favorite, ShoppingCart
+-
+-
+-class FavoriteViewSet(viewsets.ViewSet):
+-    permission_classes = [IsAuthenticated]
+-
+-    @action(detail=True, methods=['POST', 'DELETE'])
+-    def favorite(self, request, pk=None):
+-        recipe = get_object_or_404(Recipe, pk=pk)
+-
+-        if recipe.author == request.user:
+-            return Response(
+-                {
+-                    'errors': (
+-                        'Вы не можете добавить свой рецепт в избранное.'
+-                    )
+-                },
+-                status=status.HTTP_400_BAD_REQUEST,
+-            )
+-
+-        if request.method == 'POST':
+-            Favorite.objects.get_or_create(
+-                user=request.user,
+-                recipe=recipe,
+-            )
+-            return Response(status=status.HTTP_201_CREATED)
+-
+-        deleted_count, _ = Favorite.objects.filter(
+-            user=request.user,
+-            recipe=recipe,
+-        ).delete()
+-
+-        if deleted_count > 0:
+-            return Response(status=status.HTTP_204_NO_CONTENT)
+-
+-        return Response(status=status.HTTP_400_BAD_REQUEST)
+-
+-
+-class ShoppingCartViewSet(viewsets.ViewSet):
+-    permission_classes = [IsAuthenticated]
+-
+-    @action(detail=True, methods=['POST', 'DELETE'])
+-    def shopping_cart(self, request, pk=None):
+-        recipe = get_object_or_404(Recipe, pk=pk)
+-
+-        if recipe.author == request.user:
+-            return Response(
+-                {
+-                    'errors': (
+-                        'Вы не можете добавить свой рецепт '
+-                        'в список покупок.'
+-                    )
+-                },
+-                status=status.HTTP_400_BAD_REQUEST,
+-            )
+-
+-        if request.method == 'POST':
+-            ShoppingCart.objects.get_or_create(
+-                user=request.user,
+-                recipe=recipe,
+-            )
+-            return Response(status=status.HTTP_201_CREATED)
+-
+-        deleted_count, _ = ShoppingCart.objects.filter(
+-            user=request.user,
+-            recipe=recipe,
+-        ).delete()
+-
+-        if deleted_count > 0:
+-            return Response(status=status.HTTP_204_NO_CONTENT)
+-
+-        return Response(status=status.HTTP_400_BAD_REQUEST)
+-
+-
+-class ShoppingCartDownload(viewsets.ViewSet):
+-    permission_classes = [IsAuthenticated]
+-
+-    @action(detail=False, methods=['GET'])
+-    def download_shopping_cart(self, request):
+-        cart_items = ShoppingCart.objects.filter(user=request.user)
+-
+-        if not cart_items.exists():
+-            return Response(
+-                {'errors': 'Список покупок пуст.'},
+-                status=status.HTTP_400_BAD_REQUEST,
+-            )
+-
+-        ingredients = cart_items.values(
+-            'recipe__recipe_ingredients__ingredient__name',
+-            'recipe__recipe_ingredients__ingredient__measurement_unit',
+-        ).annotate(
+-            total_amount=Sum('recipe__recipe_ingredients__amount')
+-        )
+-
+-        text = 'Список покупок:\n\n'
+-
+-        for item in ingredients:
+-            name = item['recipe__recipe_ingredients__ingredient__name']
+-            unit = item[
+-                'recipe__recipe_ingredients__ingredient__measurement_unit'
+-            ]
+-            amount = item['total_amount']
+-            text += f'{name} ({unit}) — {amount}\n'
+-
+-        response = HttpResponse(text, content_type='text/plain')
+-        response['Content-Disposition'] = (
+-            'attachment; filename="shopping_list.txt"'
+-        )
+-        return response
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/convert.py work_backend/backend/convert.py
+--- orig_backend/backend/convert.py	2026-06-27 15:40:06.000000000 +0000
++++ work_backend/backend/convert.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,20 +0,0 @@
+-import json
+-
+-with open('ingredients.json', 'r', encoding='utf-8') as f:
+-    data = json.load(f)
+-
+-result = []
+-for i, item in enumerate(data, 1):
+-    result.append({
+-        "model": "recipes.ingredient",
+-        "pk": i,
+-        "fields": {
+-            "name": item["name"],
+-            "measurement_unit": item["measurement_unit"]
+-        }
+-    })
+-
+-with open('ingredients.json', 'w', encoding='utf-8') as f:
+-    json.dump(result, f, ensure_ascii=False, indent=2)
+-
+-print(f"Конвертировано {len(result)} ингредиентов")
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/data/tags.json work_backend/backend/data/tags.json
+--- orig_backend/backend/data/tags.json	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/data/tags.json	2026-07-09 08:55:02.508333529 +0000
+@@ -0,0 +1,26 @@
++[
++  {
++    "model": "recipes.tag",
++    "pk": 1,
++    "fields": {
++      "name": "Завтрак",
++      "slug": "breakfast"
++    }
++  },
++  {
++    "model": "recipes.tag",
++    "pk": 2,
++    "fields": {
++      "name": "Обед",
++      "slug": "lunch"
++    }
++  },
++  {
++    "model": "recipes.tag",
++    "pk": 3,
++    "fields": {
++      "name": "Ужин",
++      "slug": "dinner"
++    }
++  }
++]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/data.json work_backend/backend/data.json
+--- orig_backend/backend/data.json	2026-06-29 10:54:04.000000000 +0000
++++ work_backend/backend/data.json	1970-01-01 00:00:00.000000000 +0000
+@@ -1 +0,0 @@
+-{"name":"Soup","text":"Boil water","cooking_time":30,"tags":[1],"ingredients":[{"id":1,"amount":100}]}
+\ No newline at end of file
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/foodgram/settings.py work_backend/backend/foodgram/settings.py
+--- orig_backend/backend/foodgram/settings.py	2026-07-08 19:03:00.000000000 +0000
++++ work_backend/backend/foodgram/settings.py	2026-07-09 08:55:02.508605780 +0000
+@@ -1,156 +1,149 @@
+-import os
+-from pathlib import Path
+-from dotenv import load_dotenv
+-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+-
+-BASE_DIR = Path(__file__).resolve().parent.parent
+-load_dotenv(BASE_DIR / '.env')
+-
+-
+-# Quick-start development settings - unsuitable for production
+-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+-
+-
+-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-local-dev-key')
+-
+-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+-
+-ALLOWED_HOSTS = os.getenv(
+-    'ALLOWED_HOSTS',
+-    'localhost,127.0.0.1'
+-).split(',')
+-
+-
+-# Application definition
+-
+-INSTALLED_APPS = [
+-    'django.contrib.admin',
+-    'django.contrib.auth',
+-    'django.contrib.contenttypes',
+-    'django.contrib.sessions',
+-    'django.contrib.messages',
+-    'django.contrib.staticfiles',
+-    'users',
+-    'recipes',
+-    'carts',
+-    'rest_framework',
+-    'rest_framework.authtoken',
+-    'djoser',
+-    'django_filters'
+-]
+-
+-MIDDLEWARE = [
+-    'django.middleware.security.SecurityMiddleware',
+-    'django.contrib.sessions.middleware.SessionMiddleware',
+-    'django.middleware.common.CommonMiddleware',
+-    'django.middleware.csrf.CsrfViewMiddleware',
+-    'django.contrib.auth.middleware.AuthenticationMiddleware',
+-    'django.contrib.messages.middleware.MessageMiddleware',
+-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+-]
+-
+-ROOT_URLCONF = 'foodgram.urls'
+-
+-TEMPLATES = [
+-    {
+-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+-        'DIRS': [],
+-        'APP_DIRS': True,
+-        'OPTIONS': {
+-            'context_processors': [
+-                'django.template.context_processors.request',
+-                'django.contrib.auth.context_processors.auth',
+-                'django.contrib.messages.context_processors.messages',
+-            ],
+-        },
+-    },
+-]
+-
+-WSGI_APPLICATION = 'foodgram.wsgi.application'
+-
+-
+-# Database
+-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+-
+-DATABASES = {
+-    'default': {
+-        'ENGINE': 'django.db.backends.postgresql',
+-        'NAME': os.getenv('POSTGRES_DB', 'foodgram'),
+-        'USER': os.getenv('POSTGRES_USER', 'foodgram_user'),
+-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'foodgram_password'),
+-        'HOST': os.getenv('DB_HOST', 'db'),
+-        'PORT': os.getenv('DB_PORT', '5432'),
+-    }
+-}
+-
+-
+-# Password validation
+-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
+-
+-AUTH_PASSWORD_VALIDATORS = [
+-    {
+-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+-    },
+-    {
+-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+-    },
+-    {
+-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+-    },
+-    {
+-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+-    },
+-]
+-
+-
+-# Internationalization
+-# https://docs.djangoproject.com/en/6.0/topics/i18n/
+-
+-LANGUAGE_CODE = 'ru'
+-
+-TIME_ZONE = 'Europe/Moscow'
+-
+-USE_I18N = True
+-
+-USE_TZ = True
+-
+-
+-AUTH_USER_MODEL = 'users.User'
+-
+-REST_FRAMEWORK = {
+-    'DEFAULT_AUTHENTICATION_CLASSES': [
+-        'rest_framework.authentication.TokenAuthentication',
+-    ],
+-    'DEFAULT_PERMISSION_CLASSES': [
+-        'rest_framework.permissions.AllowAny',
+-    ],
+-    'DEFAULT_PAGINATION_CLASS': 'foodgram.pagination.LimitPageNumberPagination',
+-    'PAGE_SIZE': 6,
+-    'DEFAULT_FILTER_BACKENDS': [
+-        'django_filters.rest_framework.DjangoFilterBackend',
+-        'rest_framework.filters.OrderingFilter',
+-    ],
+-}
+-
+-DJOSER = {
+-    'LOGIN_FIELD': 'email',
+-    'SERIALIZERS': {
+-        'user_create': 'users.serializers.UserCreateSerializer',
+-        'user': 'users.serializers.UserSerializer',
+-        'current_user': 'users.serializers.UserSerializer',
+-    },
+-    'PERMISSIONS': {
+-        'user': ['rest_framework.permissions.IsAuthenticated'],
+-        'user_delete': ['rest_framework.permissions.IsAdminUser'],
+-        'token_destroy': ['rest_framework.permissions.IsAuthenticated'],
+-    }
+-}
+-MEDIA_URL = '/media/'
+-MEDIA_ROOT = BASE_DIR / 'media'
+-
+-STATIC_ROOT = BASE_DIR / 'collected_static'
+-STATIC_URL = '/static/'
+-
+-# STATICFILES_DIRS = [
+-#     BASE_DIR / 'static',
+-# ]
++import os
++from pathlib import Path
++
++from dotenv import load_dotenv
++
++BASE_DIR = Path(__file__).resolve().parent.parent
++load_dotenv(BASE_DIR / '.env')
++
++SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-local-dev-key')
++DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
++
++ALLOWED_HOSTS = os.getenv(
++    'ALLOWED_HOSTS',
++    'localhost,127.0.0.1',
++).split(',')
++
++CSRF_TRUSTED_ORIGINS = [
++    origin
++    for origin in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
++    if origin
++]
++
++INSTALLED_APPS = [
++    'django.contrib.admin',
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'django.contrib.staticfiles',
++    'rest_framework',
++    'rest_framework.authtoken',
++    'djoser',
++    'django_filters',
++    'recipes',
++    'api',
++]
++
++MIDDLEWARE = [
++    'django.middleware.security.SecurityMiddleware',
++    'django.contrib.sessions.middleware.SessionMiddleware',
++    'django.middleware.common.CommonMiddleware',
++    'django.middleware.csrf.CsrfViewMiddleware',
++    'django.contrib.auth.middleware.AuthenticationMiddleware',
++    'django.contrib.messages.middleware.MessageMiddleware',
++    'django.middleware.clickjacking.XFrameOptionsMiddleware',
++]
++
++ROOT_URLCONF = 'foodgram.urls'
++
++TEMPLATES = [
++    {
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.template.context_processors.request',
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    },
++]
++
++WSGI_APPLICATION = 'foodgram.wsgi.application'
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.postgresql',
++        'NAME': os.getenv('POSTGRES_DB', 'foodgram'),
++        'USER': os.getenv('POSTGRES_USER', 'foodgram_user'),
++        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'foodgram_password'),
++        'HOST': os.getenv('DB_HOST', 'db'),
++        'PORT': os.getenv('DB_PORT', '5432'),
++    }
++}
++
++AUTH_PASSWORD_VALIDATORS = [
++    {
++        'NAME': (
++            'django.contrib.auth.password_validation.'
++            'UserAttributeSimilarityValidator'
++        ),
++    },
++    {
++        'NAME': (
++            'django.contrib.auth.password_validation.'
++            'MinimumLengthValidator'
++        ),
++    },
++    {
++        'NAME': (
++            'django.contrib.auth.password_validation.'
++            'CommonPasswordValidator'
++        ),
++    },
++    {
++        'NAME': (
++            'django.contrib.auth.password_validation.'
++            'NumericPasswordValidator'
++        ),
++    },
++]
++
++LANGUAGE_CODE = 'ru'
++TIME_ZONE = 'Europe/Moscow'
++USE_I18N = True
++USE_TZ = True
++
++AUTH_USER_MODEL = 'recipes.User'
++
++REST_FRAMEWORK = {
++    'DEFAULT_AUTHENTICATION_CLASSES': [
++        'rest_framework.authentication.TokenAuthentication',
++    ],
++    'DEFAULT_PERMISSION_CLASSES': [
++        'rest_framework.permissions.AllowAny',
++    ],
++    'DEFAULT_PAGINATION_CLASS': (
++        'foodgram.pagination.LimitPageNumberPagination'
++    ),
++    'PAGE_SIZE': 6,
++    'DEFAULT_FILTER_BACKENDS': [
++        'django_filters.rest_framework.DjangoFilterBackend',
++        'rest_framework.filters.OrderingFilter',
++    ],
++}
++
++DJOSER = {
++    'LOGIN_FIELD': 'email',
++    'SERIALIZERS': {
++        'user_create': 'api.serializers.UserCreateSerializer',
++        'user': 'api.serializers.UserSerializer',
++        'current_user': 'api.serializers.UserSerializer',
++    },
++    'PERMISSIONS': {
++        'user': ['rest_framework.permissions.IsAuthenticated'],
++        'user_delete': ['rest_framework.permissions.IsAdminUser'],
++        'token_destroy': ['rest_framework.permissions.IsAuthenticated'],
++    },
++}
++
++DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
++
++MEDIA_URL = '/media/'
++MEDIA_ROOT = BASE_DIR / 'media'
++
++STATIC_URL = '/static/'
++STATIC_ROOT = BASE_DIR / 'collected_static'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/foodgram/urls.py work_backend/backend/foodgram/urls.py
+--- orig_backend/backend/foodgram/urls.py	2026-07-08 20:40:26.000000000 +0000
++++ work_backend/backend/foodgram/urls.py	2026-07-09 08:55:02.508718991 +0000
+@@ -1,23 +1,8 @@
+-from django.urls import path, include
+-from django.contrib import admin
+-from rest_framework.routers import DefaultRouter
+-
+-from users.views import CustomUserViewSet, SubscriptionViewSet
+-from recipes.views import IngredientViewSet, TagViewSet, RecipeViewSet
+-
+-router = DefaultRouter()
+-router.register(r'users', CustomUserViewSet, basename='users')
+-router.register(r'ingredients', IngredientViewSet, basename='ingredients')
+-router.register(r'tags', TagViewSet, basename='tags')
+-router.register(r'recipes', RecipeViewSet, basename='recipes')
+-
+-urlpatterns = [
+-    path('admin/', admin.site.urls),
+-    path('api/auth/', include('djoser.urls.authtoken')),
+-    path('api/', include(router.urls)),
+-
+-    path('api/users/<int:pk>/subscribe/',
+-         SubscriptionViewSet.as_view(
+-             {'post': 'subscribe', 'delete': 'subscribe'})
+-         ),
+-]
++from django.contrib import admin
++from django.urls import include, path
++
++urlpatterns = [
++    path('admin/', admin.site.urls),
++    path('api/', include('api.urls')),
++    path('', include('recipes.urls')),
++]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/admin.py work_backend/backend/recipes/admin.py
+--- orig_backend/backend/recipes/admin.py	2026-07-08 19:04:16.000000000 +0000
++++ work_backend/backend/recipes/admin.py	2026-07-09 08:55:02.509395951 +0000
+@@ -1,65 +1,194 @@
+-from django.contrib import admin
+-from carts.models import Favorite
+-
+-from .models import (
+-    Ingredient,
+-    Recipe,
+-    RecipeIngredient,
+-    Tag,
+-)
+-
+-
+-class RecipeIngredientInline(admin.TabularInline):
+-    model = RecipeIngredient
+-    extra = 1
+-
+-
+-@admin.register(Recipe)
+-class RecipeAdmin(admin.ModelAdmin):
+-    list_display = (
+-        'id',
+-        'name',
+-        'author',
+-        'favorites_count',
+-    )
+-    search_fields = (
+-        'name',
+-        'author__username',
+-        'author__email',
+-    )
+-    list_filter = (
+-        'tags',
+-        'author',
+-    )
+-    inlines = (
+-        RecipeIngredientInline,
+-    )
+-
+-    @admin.display(description='В избранном')
+-    def favorites_count(self, obj):
+-        return Favorite.objects.filter(recipe=obj).count()
+-
+-
+-@admin.register(Ingredient)
+-class IngredientAdmin(admin.ModelAdmin):
+-    list_display = (
+-        'id',
+-        'name',
+-        'measurement_unit',
+-    )
+-    search_fields = (
+-        'name',
+-    )
+-
+-
+-@admin.register(Tag)
+-class TagAdmin(admin.ModelAdmin):
+-    list_display = (
+-        'id',
+-        'name',
+-        'slug',
+-    )
+-    search_fields = (
+-        'name',
+-        'slug',
+-    )
++from django.contrib import admin
++from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
++from django.db.models import Count
++
++from .models import (
++    Favorite,
++    Product,
++    Recipe,
++    RecipeProduct,
++    ShoppingCart,
++    Subscription,
++    Tag,
++    User,
++)
++
++
++@admin.register(User)
++class UserAdmin(DjangoUserAdmin):
++    list_display = (
++        'id',
++        'username',
++        'email',
++        'first_name',
++        'last_name',
++        'recipes_count',
++        'subscribers_count',
++    )
++    search_fields = (
++        'username',
++        'email',
++        'first_name',
++        'last_name',
++    )
++    list_filter = (
++        'is_staff',
++        'is_active',
++        'date_joined',
++    )
++
++    def get_queryset(self, request):
++        queryset = super().get_queryset(request)
++        return queryset.annotate(
++            recipes_total=Count('recipes', distinct=True),
++            subscribers_total=Count('subscribers', distinct=True),
++        )
++
++    @admin.display(description='Рецептов')
++    def recipes_count(self, obj):
++        return obj.recipes_total
++
++    @admin.display(description='Подписчиков')
++    def subscribers_count(self, obj):
++        return obj.subscribers_total
++
++
++class RecipeProductInline(admin.TabularInline):
++    model = RecipeProduct
++    extra = 1
++    autocomplete_fields = ('product',)
++
++
++@admin.register(Recipe)
++class RecipeAdmin(admin.ModelAdmin):
++    list_display = (
++        'id',
++        'name',
++        'author',
++        'cooking_time',
++        'favorites_count',
++        'shopping_cart_count',
++        'products_count',
++    )
++    search_fields = (
++        'name',
++        'author__username',
++        'author__email',
++    )
++    list_filter = (
++        'tags',
++        'author',
++        'created_at',
++    )
++    autocomplete_fields = ('author', 'tags')
++    inlines = (RecipeProductInline,)
++
++    def get_queryset(self, request):
++        queryset = super().get_queryset(request)
++        return queryset.select_related('author').prefetch_related('tags')
++
++    @admin.display(description='В избранном')
++    def favorites_count(self, obj):
++        return obj.favorites.count()
++
++    @admin.display(description='В списках покупок')
++    def shopping_cart_count(self, obj):
++        return obj.shopping_cart.count()
++
++    @admin.display(description='Продуктов')
++    def products_count(self, obj):
++        return obj.recipe_products.count()
++
++
++@admin.register(Product)
++class ProductAdmin(admin.ModelAdmin):
++    list_display = (
++        'id',
++        'name',
++        'measurement_unit',
++        'recipes_count',
++    )
++    search_fields = ('name',)
++    list_filter = ('measurement_unit',)
++
++    def get_queryset(self, request):
++        queryset = super().get_queryset(request)
++        return queryset.annotate(recipes_total=Count('recipes'))
++
++    @admin.display(description='В рецептах')
++    def recipes_count(self, obj):
++        return obj.recipes_total
++
++
++@admin.register(Tag)
++class TagAdmin(admin.ModelAdmin):
++    list_display = (
++        'id',
++        'name',
++        'slug',
++        'recipes_count',
++    )
++    search_fields = ('name', 'slug')
++    prepopulated_fields = {'slug': ('name',)}
++
++    def get_queryset(self, request):
++        queryset = super().get_queryset(request)
++        return queryset.annotate(recipes_total=Count('recipes'))
++
++    @admin.display(description='Рецептов')
++    def recipes_count(self, obj):
++        return obj.recipes_total
++
++
++@admin.register(Subscription)
++class SubscriptionAdmin(admin.ModelAdmin):
++    list_display = ('id', 'user', 'author', 'created_at')
++    search_fields = (
++        'user__username',
++        'user__email',
++        'author__username',
++        'author__email',
++    )
++    list_filter = ('created_at',)
++
++
++@admin.register(Favorite)
++class FavoriteAdmin(admin.ModelAdmin):
++    list_display = ('id', 'user', 'recipe', 'recipe_author', 'created_at')
++    search_fields = ('user__username', 'recipe__name')
++    list_filter = ('created_at',)
++
++    @admin.display(description='Автор рецепта')
++    def recipe_author(self, obj):
++        return obj.recipe.author
++
++
++@admin.register(ShoppingCart)
++class ShoppingCartAdmin(admin.ModelAdmin):
++    list_display = (
++        'id',
++        'user',
++        'recipe',
++        'recipe_author',
++        'recipe_cooking_time',
++        'recipe_products_count',
++        'created_at',
++    )
++    search_fields = ('user__username', 'user__email', 'recipe__name')
++    list_filter = ('created_at', 'recipe__tags')
++
++    def get_queryset(self, request):
++        queryset = super().get_queryset(request)
++        return queryset.select_related('user', 'recipe', 'recipe__author')
++
++    @admin.display(description='Автор рецепта')
++    def recipe_author(self, obj):
++        return obj.recipe.author
++
++    @admin.display(description='Время готовки')
++    def recipe_cooking_time(self, obj):
++        return obj.recipe.cooking_time
++
++    @admin.display(description='Продуктов в рецепте')
++    def recipe_products_count(self, obj):
++        return obj.recipe.recipe_products.count()
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/apps.py work_backend/backend/recipes/apps.py
+--- orig_backend/backend/recipes/apps.py	2026-06-17 18:54:58.000000000 +0000
++++ work_backend/backend/recipes/apps.py	2026-07-09 08:55:02.510665956 +0000
+@@ -1,5 +1,6 @@
+-from django.apps import AppConfig
+-
+-
+-class RecipesConfig(AppConfig):
+-    name = 'recipes'
++from django.apps import AppConfig
++
++
++class RecipesConfig(AppConfig):
++    default_auto_field = 'django.db.models.BigAutoField'
++    name = 'recipes'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/filters.py work_backend/backend/recipes/filters.py
+--- orig_backend/backend/recipes/filters.py	2026-07-07 18:18:18.000000000 +0000
++++ work_backend/backend/recipes/filters.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,38 +0,0 @@
+-from django_filters import rest_framework as filters
+-from .models import Recipe, Tag
+-
+-
+-class RecipeFilter(filters.FilterSet):
+-    tags = filters.ModelMultipleChoiceFilter(
+-        field_name='tags__slug',
+-        to_field_name='slug',
+-        queryset=Tag.objects.all()
+-    )
+-
+-    is_favorited = filters.BooleanFilter(
+-        method='filter_is_favorited'
+-    )
+-
+-    is_in_shopping_cart = filters.BooleanFilter(
+-        method='filter_is_in_shopping_cart'
+-    )
+-
+-    author = filters.NumberFilter(field_name='author__id')
+-
+-    class Meta:
+-        model = Recipe
+-        fields = ['tags', 'author', 'is_favorited', 'is_in_shopping_cart']
+-
+-    def filter_is_favorited(self, queryset, name, value):
+-        if not self.request.user.is_authenticated:
+-            return queryset.none() if value else queryset
+-        if value:
+-            return queryset.filter(favorites__user=self.request.user)
+-        return queryset
+-
+-    def filter_is_in_shopping_cart(self, queryset, name, value):
+-        if not self.request.user.is_authenticated:
+-            return queryset.none() if value else queryset
+-        if value:
+-            return queryset.filter(shopping_cart__user=self.request.user)
+-        return queryset
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/management/commands/import_products.py work_backend/backend/recipes/management/commands/import_products.py
+--- orig_backend/backend/recipes/management/commands/import_products.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/recipes/management/commands/import_products.py	2026-07-09 08:55:02.510503721 +0000
+@@ -0,0 +1,59 @@
++import json
++
++from django.conf import settings
++from django.core.management.base import BaseCommand, CommandError
++
++from recipes.models import Product
++
++
++class Command(BaseCommand):
++    help = 'Import products from data/ingredients.json.'
++
++    def add_arguments(self, parser):
++        parser.add_argument(
++            '--path',
++            default=None,
++            help='Path to JSON file. Defaults to data/ingredients.json.',
++        )
++
++    def handle(self, *args, **options):
++        path = options['path']
++        if path is None:
++            path = settings.BASE_DIR / 'data' / 'ingredients.json'
++
++        try:
++            with open(path, encoding='utf-8') as file:
++                products = json.load(file)
++        except FileNotFoundError as error:
++            raise CommandError(f'File not found: {path}') from error
++        except json.JSONDecodeError as error:
++            raise CommandError(f'Invalid JSON: {path}') from error
++
++        created = 0
++        updated = 0
++        for item in products:
++            fields = item.get('fields', item)
++            name = fields.get('name')
++            measurement_unit = fields.get('measurement_unit')
++
++            if not name or not measurement_unit:
++                self.stderr.write(f'Skipped invalid product: {item}')
++                continue
++
++            _, was_created = Product.objects.update_or_create(
++                name=name,
++                measurement_unit=measurement_unit,
++                defaults={
++                    'name': name,
++                    'measurement_unit': measurement_unit,
++                },
++            )
++            created += int(was_created)
++            updated += int(not was_created)
++
++        self.stdout.write(
++            self.style.SUCCESS(
++                f'Products import finished. Created: {created}. '
++                f'Updated: {updated}.'
++            )
++        )
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/management/commands/import_tags.py work_backend/backend/recipes/management/commands/import_tags.py
+--- orig_backend/backend/recipes/management/commands/import_tags.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/recipes/management/commands/import_tags.py	2026-07-09 08:55:02.510585209 +0000
+@@ -0,0 +1,55 @@
++import json
++
++from django.conf import settings
++from django.core.management.base import BaseCommand, CommandError
++
++from recipes.models import Tag
++
++
++class Command(BaseCommand):
++    help = 'Import tags from data/tags.json.'
++
++    def add_arguments(self, parser):
++        parser.add_argument(
++            '--path',
++            default=None,
++            help='Path to JSON file. Defaults to data/tags.json.',
++        )
++
++    def handle(self, *args, **options):
++        path = options['path']
++        if path is None:
++            path = settings.BASE_DIR / 'data' / 'tags.json'
++
++        try:
++            with open(path, encoding='utf-8') as file:
++                tags = json.load(file)
++        except FileNotFoundError as error:
++            raise CommandError(f'File not found: {path}') from error
++        except json.JSONDecodeError as error:
++            raise CommandError(f'Invalid JSON: {path}') from error
++
++        created = 0
++        updated = 0
++        for item in tags:
++            fields = item.get('fields', item)
++            name = fields.get('name')
++            slug = fields.get('slug')
++
++            if not name or not slug:
++                self.stderr.write(f'Skipped invalid tag: {item}')
++                continue
++
++            _, was_created = Tag.objects.update_or_create(
++                slug=slug,
++                defaults={'name': name},
++            )
++            created += int(was_created)
++            updated += int(not was_created)
++
++        self.stdout.write(
++            self.style.SUCCESS(
++                f'Tags import finished. Created: {created}. '
++                f'Updated: {updated}.'
++            )
++        )
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/migrations/0001_initial.py work_backend/backend/recipes/migrations/0001_initial.py
+--- orig_backend/backend/recipes/migrations/0001_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/recipes/migrations/0001_initial.py	2026-07-09 08:55:02.511069760 +0000
+@@ -1,62 +1,522 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-    ]
+-
+-    operations = [
+-        migrations.CreateModel(
+-            name='Ingredient',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('name', models.CharField(max_length=200, verbose_name='Название ингредиента')),
+-                ('measurement_unit', models.CharField(max_length=100, verbose_name='Единица измерения')),
+-            ],
+-        ),
+-        migrations.CreateModel(
+-            name='Recipe',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('name', models.CharField(max_length=200, verbose_name='Название рецепта')),
+-                ('text', models.TextField(verbose_name='Описание рецепта')),
+-                ('cooking_time', models.PositiveIntegerField(help_text='Введите время приготовления в минутах', verbose_name='Время приготовления (в минутах)')),
+-                ('image', models.ImageField(upload_to='recipes/', verbose_name='Изображение рецепта')),
+-                ('created_at', models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')),
+-            ],
+-        ),
+-        migrations.CreateModel(
+-            name='RecipeIngredient',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('amount', models.PositiveIntegerField(help_text='Введите количество ингредиента', verbose_name='Количество ингредиента')),
+-            ],
+-            options={
+-                'verbose_name': 'Ингредиент рецепта',
+-                'verbose_name_plural': 'Ингредиенты рецепта',
+-            },
+-        ),
+-        migrations.CreateModel(
+-            name='RecipeTag',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-            ],
+-            options={
+-                'verbose_name': 'Тег рецепта',
+-                'verbose_name_plural': 'Теги рецепта',
+-            },
+-        ),
+-        migrations.CreateModel(
+-            name='Tag',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('name', models.CharField(max_length=100, verbose_name='Название тега')),
+-                ('slug', models.SlugField(unique=True, verbose_name='Слаг тега')),
+-            ],
+-        ),
+-    ]
++import django.contrib.auth.models
++import django.contrib.auth.validators
++import django.core.validators
++import django.db.models.deletion
++import django.utils.timezone
++from django.db import migrations, models
++
++
++class Migration(migrations.Migration):
++    initial = True
++
++    dependencies = [
++        ('auth', '0012_alter_user_first_name_max_length'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='User',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                ('password', models.CharField(max_length=128, verbose_name='password')),
++                (
++                    'last_login',
++                    models.DateTimeField(
++                        blank=True,
++                        null=True,
++                        verbose_name='last login',
++                    ),
++                ),
++                (
++                    'is_superuser',
++                    models.BooleanField(
++                        default=False,
++                        help_text=(
++                            'Designates that this user has all permissions '
++                            'without explicitly assigning them.'
++                        ),
++                        verbose_name='superuser status',
++                    ),
++                ),
++                (
++                    'username',
++                    models.CharField(
++                        error_messages={
++                            'unique': (
++                                'A user with that username already exists.'
++                            ),
++                        },
++                        help_text=(
++                            'Required. 150 characters or fewer. '
++                            'Letters, digits and @/./+/-/_ only.'
++                        ),
++                        max_length=150,
++                        unique=True,
++                        validators=[
++                            django.contrib.auth.validators.UnicodeUsernameValidator(),
++                        ],
++                        verbose_name='username',
++                    ),
++                ),
++                (
++                    'first_name',
++                    models.CharField(
++                        blank=True,
++                        max_length=150,
++                        verbose_name='first name',
++                    ),
++                ),
++                (
++                    'last_name',
++                    models.CharField(
++                        blank=True,
++                        max_length=150,
++                        verbose_name='last name',
++                    ),
++                ),
++                (
++                    'is_staff',
++                    models.BooleanField(
++                        default=False,
++                        help_text=(
++                            'Designates whether the user can log into this '
++                            'admin site.'
++                        ),
++                        verbose_name='staff status',
++                    ),
++                ),
++                (
++                    'is_active',
++                    models.BooleanField(
++                        default=True,
++                        help_text=(
++                            'Designates whether this user should be treated '
++                            'as active. Unselect this instead of deleting '
++                            'accounts.'
++                        ),
++                        verbose_name='active',
++                    ),
++                ),
++                (
++                    'date_joined',
++                    models.DateTimeField(
++                        default=django.utils.timezone.now,
++                        verbose_name='date joined',
++                    ),
++                ),
++                (
++                    'email',
++                    models.EmailField(
++                        max_length=254,
++                        unique=True,
++                        verbose_name='Электронная почта',
++                    ),
++                ),
++                (
++                    'avatar',
++                    models.ImageField(
++                        blank=True,
++                        null=True,
++                        upload_to='avatar/',
++                        verbose_name='Аватар',
++                    ),
++                ),
++                (
++                    'groups',
++                    models.ManyToManyField(
++                        blank=True,
++                        help_text=(
++                            'The groups this user belongs to. A user will '
++                            'get all permissions granted to each of their '
++                            'groups.'
++                        ),
++                        related_name='user_set',
++                        related_query_name='user',
++                        to='auth.group',
++                        verbose_name='groups',
++                    ),
++                ),
++                (
++                    'user_permissions',
++                    models.ManyToManyField(
++                        blank=True,
++                        help_text='Specific permissions for this user.',
++                        related_name='user_set',
++                        related_query_name='user',
++                        to='auth.permission',
++                        verbose_name='user permissions',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Пользователь',
++                'verbose_name_plural': 'Пользователи',
++                'ordering': ('id',),
++            },
++            managers=[
++                ('objects', django.contrib.auth.models.UserManager()),
++            ],
++        ),
++        migrations.CreateModel(
++            name='Product',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'name',
++                    models.CharField(
++                        max_length=200,
++                        verbose_name='Название продукта',
++                    ),
++                ),
++                (
++                    'measurement_unit',
++                    models.CharField(
++                        max_length=100,
++                        verbose_name='Единица измерения',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Продукт',
++                'verbose_name_plural': 'Продукты',
++                'ordering': ('name', 'id'),
++            },
++        ),
++        migrations.CreateModel(
++            name='Tag',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'name',
++                    models.CharField(
++                        max_length=100,
++                        verbose_name='Название тега',
++                    ),
++                ),
++                (
++                    'slug',
++                    models.SlugField(
++                        unique=True,
++                        verbose_name='Слаг тега',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Тег',
++                'verbose_name_plural': 'Теги',
++                'ordering': ('id',),
++            },
++        ),
++        migrations.CreateModel(
++            name='Recipe',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'name',
++                    models.CharField(
++                        max_length=200,
++                        verbose_name='Название рецепта',
++                    ),
++                ),
++                ('text', models.TextField(verbose_name='Описание рецепта')),
++                (
++                    'cooking_time',
++                    models.PositiveIntegerField(
++                        help_text='Введите время приготовления в минутах',
++                        validators=[django.core.validators.MinValueValidator(1)],
++                        verbose_name='Время приготовления',
++                    ),
++                ),
++                (
++                    'image',
++                    models.ImageField(
++                        upload_to='recipes/',
++                        verbose_name='Изображение рецепта',
++                    ),
++                ),
++                (
++                    'created_at',
++                    models.DateTimeField(
++                        auto_now_add=True,
++                        verbose_name='Дата создания',
++                    ),
++                ),
++                (
++                    'author',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='recipes',
++                        to='recipes.user',
++                        verbose_name='Автор рецепта',
++                    ),
++                ),
++                (
++                    'tags',
++                    models.ManyToManyField(
++                        related_name='recipes',
++                        to='recipes.tag',
++                        verbose_name='Теги',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Рецепт',
++                'verbose_name_plural': 'Рецепты',
++                'ordering': ('-created_at', 'id'),
++            },
++        ),
++        migrations.CreateModel(
++            name='RecipeProduct',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'amount',
++                    models.PositiveIntegerField(
++                        help_text='Введите количество продукта',
++                        validators=[django.core.validators.MinValueValidator(1)],
++                        verbose_name='Количество продукта',
++                    ),
++                ),
++                (
++                    'product',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='recipe_products',
++                        to='recipes.product',
++                        verbose_name='Продукт',
++                    ),
++                ),
++                (
++                    'recipe',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='recipe_products',
++                        to='recipes.recipe',
++                        verbose_name='Рецепт',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Продукт рецепта',
++                'verbose_name_plural': 'Продукты рецепта',
++                'ordering': ('recipe', 'product'),
++            },
++        ),
++        migrations.AddField(
++            model_name='recipe',
++            name='products',
++            field=models.ManyToManyField(
++                related_name='recipes',
++                through='recipes.RecipeProduct',
++                to='recipes.product',
++                verbose_name='Продукты',
++            ),
++        ),
++        migrations.CreateModel(
++            name='Subscription',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'created_at',
++                    models.DateTimeField(
++                        auto_now_add=True,
++                        verbose_name='Дата подписки',
++                    ),
++                ),
++                (
++                    'author',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='subscribers',
++                        to='recipes.user',
++                        verbose_name='Автор',
++                    ),
++                ),
++                (
++                    'user',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='subscriptions',
++                        to='recipes.user',
++                        verbose_name='Подписчик',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Подписка',
++                'verbose_name_plural': 'Подписки',
++                'ordering': ('-created_at',),
++            },
++        ),
++        migrations.CreateModel(
++            name='Favorite',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'created_at',
++                    models.DateTimeField(
++                        auto_now_add=True,
++                        verbose_name='Дата добавления',
++                    ),
++                ),
++                (
++                    'recipe',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='favorites',
++                        to='recipes.recipe',
++                        verbose_name='Рецепт',
++                    ),
++                ),
++                (
++                    'user',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='favorite_recipes',
++                        to='recipes.user',
++                        verbose_name='Пользователь',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Избранный рецепт',
++                'verbose_name_plural': 'Избранные рецепты',
++                'ordering': ('-created_at',),
++            },
++        ),
++        migrations.CreateModel(
++            name='ShoppingCart',
++            fields=[
++                (
++                    'id',
++                    models.BigAutoField(
++                        auto_created=True,
++                        primary_key=True,
++                        serialize=False,
++                        verbose_name='ID',
++                    ),
++                ),
++                (
++                    'created_at',
++                    models.DateTimeField(
++                        auto_now_add=True,
++                        verbose_name='Дата добавления',
++                    ),
++                ),
++                (
++                    'recipe',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='shopping_cart',
++                        to='recipes.recipe',
++                        verbose_name='Рецепт',
++                    ),
++                ),
++                (
++                    'user',
++                    models.ForeignKey(
++                        on_delete=django.db.models.deletion.CASCADE,
++                        related_name='cart_recipes',
++                        to='recipes.user',
++                        verbose_name='Пользователь',
++                    ),
++                ),
++            ],
++            options={
++                'verbose_name': 'Позиция списка покупок',
++                'verbose_name_plural': 'Список покупок',
++                'ordering': ('-created_at',),
++            },
++        ),
++        migrations.AddConstraint(
++            model_name='product',
++            constraint=models.UniqueConstraint(
++                fields=('name', 'measurement_unit'),
++                name='unique_product_measurement_unit',
++            ),
++        ),
++        migrations.AddConstraint(
++            model_name='recipeproduct',
++            constraint=models.UniqueConstraint(
++                fields=('recipe', 'product'),
++                name='unique_recipe_product',
++            ),
++        ),
++        migrations.AddConstraint(
++            model_name='subscription',
++            constraint=models.UniqueConstraint(
++                fields=('user', 'author'),
++                name='unique_subscription',
++            ),
++        ),
++        migrations.AddConstraint(
++            model_name='favorite',
++            constraint=models.UniqueConstraint(
++                fields=('user', 'recipe'),
++                name='unique_favorite_recipe',
++            ),
++        ),
++        migrations.AddConstraint(
++            model_name='shoppingcart',
++            constraint=models.UniqueConstraint(
++                fields=('user', 'recipe'),
++                name='unique_shopping_cart_recipe',
++            ),
++        ),
++    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/migrations/0002_initial.py work_backend/backend/recipes/migrations/0002_initial.py
+--- orig_backend/backend/recipes/migrations/0002_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/recipes/migrations/0002_initial.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,61 +0,0 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-import django.db.models.deletion
+-from django.conf import settings
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-        ('recipes', '0001_initial'),
+-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+-    ]
+-
+-    operations = [
+-        migrations.AddField(
+-            model_name='recipe',
+-            name='author',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='recipes', to=settings.AUTH_USER_MODEL, verbose_name='Автор рецепта'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipeingredient',
+-            name='ingredient',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='ingredient_recipes', to='recipes.ingredient', verbose_name='Ингредиент'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipeingredient',
+-            name='recipe',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='recipe_ingredients', to='recipes.recipe', verbose_name='Рецепт'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipe',
+-            name='ingredients',
+-            field=models.ManyToManyField(related_name='recipes', through='recipes.RecipeIngredient', to='recipes.ingredient', verbose_name='Ингредиенты'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipetag',
+-            name='recipe',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='recipe_tags', to='recipes.recipe', verbose_name='Рецепт'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipetag',
+-            name='tag',
+-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tag_recipes', to='recipes.tag', verbose_name='Тег'),
+-        ),
+-        migrations.AddField(
+-            model_name='recipe',
+-            name='tags',
+-            field=models.ManyToManyField(related_name='recipes', through='recipes.RecipeTag', to='recipes.tag', verbose_name='Теги'),
+-        ),
+-        migrations.AlterUniqueTogether(
+-            name='recipeingredient',
+-            unique_together={('recipe', 'ingredient')},
+-        ),
+-        migrations.AlterUniqueTogether(
+-            name='recipetag',
+-            unique_together={('recipe', 'tag')},
+-        ),
+-    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/models.py work_backend/backend/recipes/models.py
+--- orig_backend/backend/recipes/models.py	2026-07-08 20:44:30.000000000 +0000
++++ work_backend/backend/recipes/models.py	2026-07-09 08:55:02.508909928 +0000
+@@ -1,135 +1,258 @@
+-from django.db import models
+-from users.models import User
+-
+-
+-class Ingredient(models.Model):
+-    name = models.CharField(
+-        max_length=200,
+-        verbose_name='Название ингредиента'
+-    )
+-    measurement_unit = models.CharField(
+-        max_length=100,
+-        verbose_name='Единица измерения'
+-    )
+-
+-    def __str__(self):
+-        return self.name
+-
+-
+-class Tag(models.Model):
+-    name = models.CharField(
+-        max_length=100,
+-        verbose_name='Название тега'
+-    )
+-    slug = models.SlugField(
+-        unique=True,
+-        verbose_name='Слаг тега'
+-    )
+-
+-    def __str__(self):
+-        return self.name
+-
+-
+-class RecipeIngredient(models.Model):
+-    recipe = models.ForeignKey(
+-        'Recipe',
+-        on_delete=models.CASCADE,
+-        related_name='recipe_ingredients',
+-        verbose_name='Рецепт'
+-    )
+-    ingredient = models.ForeignKey(
+-        Ingredient,
+-        on_delete=models.CASCADE,
+-        related_name='ingredient_recipes',
+-        verbose_name='Ингредиент'
+-    )
+-    amount = models.PositiveIntegerField(
+-        verbose_name='Количество ингредиента',
+-        help_text='Введите количество ингредиента'
+-    )
+-
+-    class Meta:
+-        unique_together = ('recipe', 'ingredient')
+-        verbose_name = 'Ингредиент рецепта'
+-        verbose_name_plural = 'Ингредиенты рецепта'
+-
+-    def __str__(self):
+-        return (
+-            f'{self.amount} '
+-            f'{self.ingredient.measurement_unit} '
+-            f'{self.ingredient.name} в {self.recipe.name}'
+-        )
+-
+-
+-class Recipe(models.Model):
+-    name = models.CharField(
+-        max_length=200,
+-        verbose_name='Название рецепта'
+-    )
+-
+-    author = models.ForeignKey(
+-        User,
+-        on_delete=models.CASCADE,
+-        related_name='recipes',
+-        verbose_name='Автор рецепта'
+-    )
+-
+-    tags = models.ManyToManyField(
+-        Tag,
+-        through='RecipeTag',
+-        related_name='recipes',
+-        verbose_name='Теги'
+-    )
+-
+-    text = models.TextField(
+-        verbose_name='Описание рецепта'
+-    )
+-
+-    cooking_time = models.PositiveIntegerField(
+-        verbose_name='Время приготовления (в минутах)',
+-        help_text='Введите время приготовления в минутах'
+-    )
+-
+-    image = models.ImageField(
+-        upload_to='recipes/',
+-        verbose_name='Изображение рецепта'
+-    )
+-
+-    ingredients = models.ManyToManyField(
+-        Ingredient,
+-        through='RecipeIngredient',
+-        related_name='recipes',
+-        verbose_name='Ингредиенты'
+-    )
+-
+-    created_at = models.DateTimeField(
+-        auto_now_add=True,
+-        verbose_name='Дата создания'
+-    )
+-
+-    def __str__(self):
+-        return self.name
+-
+-
+-class RecipeTag(models.Model):
+-    recipe = models.ForeignKey(
+-        Recipe,
+-        on_delete=models.CASCADE,
+-        related_name='recipe_tags',
+-        verbose_name='Рецепт'
+-    )
+-
+-    tag = models.ForeignKey(
+-        Tag,
+-        on_delete=models.CASCADE,
+-        related_name='tag_recipes',
+-        verbose_name='Тег'
+-    )
+-
+-    class Meta:
+-        unique_together = ('recipe', 'tag')
+-        verbose_name = 'Тег рецепта'
+-        verbose_name_plural = 'Теги рецепта'
+-
+-    def __str__(self):
+-        return f'Тег {self.tag.name} рецепта {self.recipe.name}'
++from django.contrib.auth.models import AbstractUser
++from django.core.validators import MinValueValidator
++from django.db import models
++
++MIN_COOKING_TIME = 1
++MIN_PRODUCT_AMOUNT = 1
++
++
++class User(AbstractUser):
++    email = models.EmailField(
++        unique=True,
++        verbose_name='Электронная почта',
++    )
++    avatar = models.ImageField(
++        upload_to='avatar/',
++        blank=True,
++        null=True,
++        verbose_name='Аватар',
++    )
++
++    USERNAME_FIELD = 'email'
++    REQUIRED_FIELDS = ('username', 'first_name', 'last_name')
++
++    class Meta:
++        ordering = ('id',)
++        verbose_name = 'Пользователь'
++        verbose_name_plural = 'Пользователи'
++
++    def __str__(self):
++        return self.username
++
++
++class Product(models.Model):
++    name = models.CharField(
++        max_length=200,
++        verbose_name='Название продукта',
++    )
++    measurement_unit = models.CharField(
++        max_length=100,
++        verbose_name='Единица измерения',
++    )
++
++    class Meta:
++        ordering = ('name', 'id')
++        constraints = (
++            models.UniqueConstraint(
++                fields=('name', 'measurement_unit'),
++                name='unique_product_measurement_unit',
++            ),
++        )
++        verbose_name = 'Продукт'
++        verbose_name_plural = 'Продукты'
++
++    def __str__(self):
++        return f'{self.name}, {self.measurement_unit}'
++
++
++class Tag(models.Model):
++    name = models.CharField(
++        max_length=100,
++        verbose_name='Название тега',
++    )
++    slug = models.SlugField(
++        unique=True,
++        verbose_name='Слаг тега',
++    )
++
++    class Meta:
++        ordering = ('id',)
++        verbose_name = 'Тег'
++        verbose_name_plural = 'Теги'
++
++    def __str__(self):
++        return self.name
++
++
++class Recipe(models.Model):
++    name = models.CharField(
++        max_length=200,
++        verbose_name='Название рецепта',
++    )
++    author = models.ForeignKey(
++        User,
++        on_delete=models.CASCADE,
++        related_name='recipes',
++        verbose_name='Автор рецепта',
++    )
++    tags = models.ManyToManyField(
++        Tag,
++        related_name='recipes',
++        verbose_name='Теги',
++    )
++    text = models.TextField(
++        verbose_name='Описание рецепта',
++    )
++    cooking_time = models.PositiveIntegerField(
++        validators=(MinValueValidator(MIN_COOKING_TIME),),
++        verbose_name='Время приготовления',
++        help_text='Введите время приготовления в минутах',
++    )
++    image = models.ImageField(
++        upload_to='recipes/',
++        verbose_name='Изображение рецепта',
++    )
++    products = models.ManyToManyField(
++        Product,
++        through='RecipeProduct',
++        related_name='recipes',
++        verbose_name='Продукты',
++    )
++    created_at = models.DateTimeField(
++        auto_now_add=True,
++        verbose_name='Дата создания',
++    )
++
++    class Meta:
++        ordering = ('-created_at', 'id')
++        verbose_name = 'Рецепт'
++        verbose_name_plural = 'Рецепты'
++
++    def __str__(self):
++        return self.name
++
++
++class RecipeProduct(models.Model):
++    recipe = models.ForeignKey(
++        Recipe,
++        on_delete=models.CASCADE,
++        related_name='recipe_products',
++        verbose_name='Рецепт',
++    )
++    product = models.ForeignKey(
++        Product,
++        on_delete=models.CASCADE,
++        related_name='recipe_products',
++        verbose_name='Продукт',
++    )
++    amount = models.PositiveIntegerField(
++        validators=(MinValueValidator(MIN_PRODUCT_AMOUNT),),
++        verbose_name='Количество продукта',
++        help_text='Введите количество продукта',
++    )
++
++    class Meta:
++        ordering = ('recipe', 'product')
++        constraints = (
++            models.UniqueConstraint(
++                fields=('recipe', 'product'),
++                name='unique_recipe_product',
++            ),
++        )
++        verbose_name = 'Продукт рецепта'
++        verbose_name_plural = 'Продукты рецепта'
++
++    def __str__(self):
++        return (
++            f'{self.amount} {self.product.measurement_unit} '
++            f'{self.product.name} в {self.recipe.name}'
++        )
++
++
++class Subscription(models.Model):
++    user = models.ForeignKey(
++        User,
++        on_delete=models.CASCADE,
++        related_name='subscriptions',
++        verbose_name='Подписчик',
++    )
++    author = models.ForeignKey(
++        User,
++        on_delete=models.CASCADE,
++        related_name='subscribers',
++        verbose_name='Автор',
++    )
++    created_at = models.DateTimeField(
++        auto_now_add=True,
++        verbose_name='Дата подписки',
++    )
++
++    class Meta:
++        ordering = ('-created_at',)
++        constraints = (
++            models.UniqueConstraint(
++                fields=('user', 'author'),
++                name='unique_subscription',
++            ),
++        )
++        verbose_name = 'Подписка'
++        verbose_name_plural = 'Подписки'
++
++    def __str__(self):
++        return f'{self.user} подписан на {self.author}'
++
++
++class Favorite(models.Model):
++    user = models.ForeignKey(
++        User,
++        on_delete=models.CASCADE,
++        related_name='favorite_recipes',
++        verbose_name='Пользователь',
++    )
++    recipe = models.ForeignKey(
++        Recipe,
++        on_delete=models.CASCADE,
++        related_name='favorites',
++        verbose_name='Рецепт',
++    )
++    created_at = models.DateTimeField(
++        auto_now_add=True,
++        verbose_name='Дата добавления',
++    )
++
++    class Meta:
++        ordering = ('-created_at',)
++        constraints = (
++            models.UniqueConstraint(
++                fields=('user', 'recipe'),
++                name='unique_favorite_recipe',
++            ),
++        )
++        verbose_name = 'Избранный рецепт'
++        verbose_name_plural = 'Избранные рецепты'
++
++    def __str__(self):
++        return f'{self.user} добавил {self.recipe} в избранное'
++
++
++class ShoppingCart(models.Model):
++    user = models.ForeignKey(
++        User,
++        on_delete=models.CASCADE,
++        related_name='cart_recipes',
++        verbose_name='Пользователь',
++    )
++    recipe = models.ForeignKey(
++        Recipe,
++        on_delete=models.CASCADE,
++        related_name='shopping_cart',
++        verbose_name='Рецепт',
++    )
++    created_at = models.DateTimeField(
++        auto_now_add=True,
++        verbose_name='Дата добавления',
++    )
++
++    class Meta:
++        ordering = ('-created_at',)
++        constraints = (
++            models.UniqueConstraint(
++                fields=('user', 'recipe'),
++                name='unique_shopping_cart_recipe',
++            ),
++        )
++        verbose_name = 'Позиция списка покупок'
++        verbose_name_plural = 'Список покупок'
++
++    def __str__(self):
++        return f'{self.user} добавил {self.recipe} в список покупок'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/permissions.py work_backend/backend/recipes/permissions.py
+--- orig_backend/backend/recipes/permissions.py	2026-06-27 12:40:30.000000000 +0000
++++ work_backend/backend/recipes/permissions.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,15 +0,0 @@
+-from rest_framework import permissions
+-
+-
+-class ISAuthorOrReadOnly(permissions.BasePermission):
+-
+-    def has_object_permission(self, request, view, obj):
+-        if request.method in permissions.SAFE_METHODS:
+-            return True
+-
+-        return obj.author == request.user
+-
+-    def has_permission(self, request, view):
+-        if request.method in permissions.SAFE_METHODS:
+-            return True
+-        return request.user.is_authenticated and request.user.is_active
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/serializers.py work_backend/backend/recipes/serializers.py
+--- orig_backend/backend/recipes/serializers.py	2026-07-08 20:44:48.000000000 +0000
++++ work_backend/backend/recipes/serializers.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,223 +0,0 @@
+-import base64
+-import binascii
+-
+-from django.core.files.base import ContentFile
+-from rest_framework import serializers
+-
+-from carts.models import Favorite, ShoppingCart
+-from users.serializers import UserSerializer
+-from .models import Ingredient, Recipe, RecipeIngredient, Tag
+-
+-
+-class IngredientSerializer(serializers.ModelSerializer):
+-    class Meta:
+-        model = Ingredient
+-        fields = ('id', 'name', 'measurement_unit')
+-
+-
+-class TagSerializer(serializers.ModelSerializer):
+-    class Meta:
+-        model = Tag
+-        fields = ('id', 'name', 'slug')
+-
+-
+-class RecipeIngredientSerializer(serializers.ModelSerializer):
+-    id = serializers.IntegerField(source='ingredient.id')
+-    name = serializers.CharField(source='ingredient.name')
+-    measurement_unit = serializers.CharField(
+-        source='ingredient.measurement_unit'
+-    )
+-
+-    class Meta:
+-        model = RecipeIngredient
+-        fields = ('id', 'name', 'measurement_unit', 'amount')
+-
+-
+-class RecipeShortSerializer(serializers.ModelSerializer):
+-    image = serializers.SerializerMethodField()
+-
+-    class Meta:
+-        model = Recipe
+-        fields = ('id', 'name', 'image', 'cooking_time')
+-
+-    def get_image(self, obj):
+-        if obj.image:
+-            request = self.context.get('request')
+-            if request:
+-                return request.build_absolute_uri(obj.image.url)
+-            return obj.image.url
+-        return None
+-
+-
+-class RecipeSerializer(serializers.ModelSerializer):
+-    author = UserSerializer(read_only=True)
+-    ingredients = RecipeIngredientSerializer(
+-        many=True,
+-        read_only=True,
+-        source='recipe_ingredients',
+-    )
+-    tags = TagSerializer(many=True, read_only=True)
+-    is_favorited = serializers.SerializerMethodField()
+-    is_in_shopping_cart = serializers.SerializerMethodField()
+-    image = serializers.SerializerMethodField()
+-
+-    class Meta:
+-        model = Recipe
+-        fields = (
+-            'id', 'tags', 'author', 'ingredients',
+-            'is_favorited', 'is_in_shopping_cart',
+-            'name', 'image', 'text', 'cooking_time',
+-        )
+-
+-    def get_image(self, obj):
+-        if obj.image:
+-            request = self.context.get('request')
+-            if request:
+-                return request.build_absolute_uri(obj.image.url)
+-            return obj.image.url
+-        return None
+-
+-    def get_is_favorited(self, obj):
+-        request = self.context.get('request')
+-        if request and request.user.is_authenticated:
+-            return Favorite.objects.filter(
+-                user=request.user, recipe=obj).exists()
+-        return False
+-
+-    def get_is_in_shopping_cart(self, obj):
+-        request = self.context.get('request')
+-        if request and request.user.is_authenticated:
+-            return ShoppingCart.objects.filter(
+-                user=request.user,
+-                recipe=obj,
+-            ).exists()
+-        return False
+-
+-
+-class IngredientsAmountSerializer(serializers.Serializer):
+-    id = serializers.PrimaryKeyRelatedField(queryset=Ingredient.objects.all())
+-    amount = serializers.IntegerField(min_value=1)
+-
+-
+-class RecipeCreateSerializer(serializers.ModelSerializer):
+-    ingredients = IngredientsAmountSerializer(many=True)
+-    tags = serializers.PrimaryKeyRelatedField(
+-        many=True,
+-        queryset=Tag.objects.all(),
+-    )
+-    image = serializers.CharField(allow_blank=False)
+-    cooking_time = serializers.IntegerField(min_value=1)
+-
+-    class Meta:
+-        model = Recipe
+-        fields = (
+-            'name', 'text', 'cooking_time',
+-            'image', 'ingredients', 'tags',
+-        )
+-
+-    def validate_ingredients(self, value):
+-        if not value:
+-            raise serializers.ValidationError(
+-                'Список ингредиентов не может быть пустым.'
+-            )
+-        ingredient_ids = [item['id'].id for item in value]
+-        if len(ingredient_ids) != len(set(ingredient_ids)):
+-            raise serializers.ValidationError(
+-                'Ингредиенты не должны повторяться.'
+-            )
+-        return value
+-
+-    def validate_tags(self, value):
+-        if not value:
+-            raise serializers.ValidationError(
+-                'Список тегов не может быть пустым.'
+-            )
+-        tag_ids = [tag.id for tag in value]
+-        if len(tag_ids) != len(set(tag_ids)):
+-            raise serializers.ValidationError(
+-                'Теги не должны повторяться.'
+-            )
+-        return value
+-
+-    def validate_image(self, value):
+-        if not value:
+-            raise serializers.ValidationError(
+-                'Изображение не может быть пустым.'
+-            )
+-        if ';base64,' not in value:
+-            raise serializers.ValidationError(
+-                'Некорректный формат изображения.'
+-            )
+-        return value
+-
+-    def validate(self, attrs):
+-        if self.instance is not None:
+-            for field in ('ingredients', 'tags'):
+-                if field not in self.initial_data:
+-                    raise serializers.ValidationError({
+-                        field: 'Это поле обязательно.'
+-                    })
+-        return attrs
+-
+-    def _decode_image(self, image_data):
+-        try:
+-            file_format, imgstr = image_data.split(';base64,')
+-            ext = file_format.split('/')[-1]
+-            return ContentFile(
+-                base64.b64decode(imgstr),
+-                name=f'recipe.{ext}',
+-            )
+-        except (TypeError, ValueError, binascii.Error):
+-            raise serializers.ValidationError({
+-                'image': 'Некорректный формат изображения.'
+-            })
+-
+-    def _create_ingredients(self, recipe, ingredients_data):
+-        RecipeIngredient.objects.bulk_create(
+-            RecipeIngredient(
+-                recipe=recipe,
+-                ingredient=ingredient['id'],
+-                amount=ingredient['amount'],
+-            )
+-            for ingredient in ingredients_data
+-        )
+-
+-    def create(self, validated_data):
+-        image_data = validated_data.pop('image')
+-        ingredients_data = validated_data.pop('ingredients')
+-        tags_data = validated_data.pop('tags')
+-        author = validated_data.pop('author', self.context['request'].user)
+-
+-        recipe = Recipe.objects.create(
+-            author=author,
+-            image=self._decode_image(image_data),
+-            **validated_data,
+-        )
+-        self._create_ingredients(recipe, ingredients_data)
+-        recipe.tags.set(tags_data)
+-        return recipe
+-
+-    def update(self, instance, validated_data):
+-        image_data = validated_data.pop('image', None)
+-        ingredients_data = validated_data.pop('ingredients', None)
+-        tags_data = validated_data.pop('tags', None)
+-
+-        for attr, value in validated_data.items():
+-            setattr(instance, attr, value)
+-
+-        if image_data is not None:
+-            instance.image = self._decode_image(image_data)
+-
+-        instance.save()
+-
+-        if tags_data is not None:
+-            instance.tags.set(tags_data)
+-
+-        if ingredients_data is not None:
+-            RecipeIngredient.objects.filter(recipe=instance).delete()
+-            self._create_ingredients(instance, ingredients_data)
+-
+-        return instance
+-
+-    def to_representation(self, instance):
+-        return RecipeSerializer(instance, context=self.context).data
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/urls.py work_backend/backend/recipes/urls.py
+--- orig_backend/backend/recipes/urls.py	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/recipes/urls.py	2026-07-09 08:55:02.509167026 +0000
+@@ -0,0 +1,7 @@
++from django.urls import path
++
++from .views import short_link_redirect
++
++urlpatterns = [
++    path('s/<int:recipe_id>/', short_link_redirect, name='short-link'),
++]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/recipes/views.py work_backend/backend/recipes/views.py
+--- orig_backend/backend/recipes/views.py	2026-07-08 20:42:36.000000000 +0000
++++ work_backend/backend/recipes/views.py	2026-07-09 08:55:02.509070791 +0000
+@@ -1,182 +1,8 @@
+-from django.db.models import Sum
+-from django.http import HttpResponse
+-from django.shortcuts import get_object_or_404
+-from django_filters.rest_framework import DjangoFilterBackend
+-from rest_framework import status, viewsets
+-from rest_framework.decorators import action
+-from rest_framework.filters import SearchFilter
+-from rest_framework.permissions import AllowAny, IsAuthenticated
+-from rest_framework.response import Response
++from django.shortcuts import get_object_or_404, redirect
+ 
+-from carts.models import Favorite, ShoppingCart
++from .models import Recipe
+ 
+-from .filters import RecipeFilter
+-from .models import Ingredient, Recipe, Tag
+-from .permissions import ISAuthorOrReadOnly
+-from .serializers import (
+-    IngredientSerializer,
+-    RecipeCreateSerializer,
+-    RecipeSerializer,
+-    RecipeShortSerializer,
+-    TagSerializer,
+-)
+ 
+-
+-class IngredientViewSet(viewsets.ReadOnlyModelViewSet):
+-    queryset = Ingredient.objects.all()
+-    serializer_class = IngredientSerializer
+-    filter_backends = (SearchFilter,)
+-    search_fields = ('^name',)
+-    pagination_class = None
+-
+-    def get_queryset(self):
+-        queryset = super().get_queryset()
+-        name = self.request.query_params.get('name')
+-        if name:
+-            queryset = queryset.filter(name__istartswith=name)
+-        return queryset
+-
+-
+-class TagViewSet(viewsets.ReadOnlyModelViewSet):
+-    queryset = Tag.objects.all()
+-    serializer_class = TagSerializer
+-    pagination_class = None
+-
+-
+-class RecipeViewSet(viewsets.ModelViewSet):
+-    permission_classes = (ISAuthorOrReadOnly,)
+-    queryset = Recipe.objects.all().order_by('-created_at')
+-    filter_backends = (DjangoFilterBackend,)
+-    filterset_class = RecipeFilter
+-
+-    def get_serializer_class(self):
+-        if self.action in ('create', 'update', 'partial_update'):
+-            return RecipeCreateSerializer
+-        return RecipeSerializer
+-
+-    def perform_create(self, serializer):
+-        serializer.save(author=self.request.user)
+-
+-    @action(
+-        detail=True,
+-        methods=('get',),
+-        url_path='get-link',
+-        permission_classes=(AllowAny,),
+-    )
+-    def get_link(self, request, pk=None):
+-        recipe = self.get_object()
+-        short_link = request.build_absolute_uri(f'/s/{recipe.id}/')
+-        return Response({'short-link': short_link})
+-
+-    @action(
+-        detail=True,
+-        methods=('post', 'delete'),
+-        permission_classes=(IsAuthenticated,),
+-    )
+-    def favorite(self, request, pk=None):
+-        recipe = get_object_or_404(Recipe, pk=pk)
+-        user = request.user
+-
+-        if request.method == 'POST':
+-            _, created = Favorite.objects.get_or_create(
+-                user=user,
+-                recipe=recipe,
+-            )
+-            if not created:
+-                return Response(
+-                    {'errors': 'Рецепт уже в избранном.'},
+-                    status=status.HTTP_400_BAD_REQUEST,
+-                )
+-            serializer = RecipeShortSerializer(
+-                recipe,
+-                context={'request': request},
+-            )
+-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+-
+-        deleted, _ = Favorite.objects.filter(
+-            user=user,
+-            recipe=recipe,
+-        ).delete()
+-
+-        if deleted:
+-            return Response(status=status.HTTP_204_NO_CONTENT)
+-
+-        return Response(
+-            {'errors': 'Рецепта не было в избранном.'},
+-            status=status.HTTP_400_BAD_REQUEST,
+-        )
+-
+-    @action(
+-        detail=True,
+-        methods=('post', 'delete'),
+-        permission_classes=(IsAuthenticated,),
+-    )
+-    def shopping_cart(self, request, pk=None):
+-        recipe = get_object_or_404(Recipe, pk=pk)
+-        user = request.user
+-
+-        if request.method == 'POST':
+-            _, created = ShoppingCart.objects.get_or_create(
+-                user=user,
+-                recipe=recipe,
+-            )
+-            if not created:
+-                return Response(
+-                    {'errors': 'Рецепт уже в списке покупок.'},
+-                    status=status.HTTP_400_BAD_REQUEST,
+-                )
+-            serializer = RecipeShortSerializer(
+-                recipe,
+-                context={'request': request},
+-            )
+-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+-
+-        deleted, _ = ShoppingCart.objects.filter(
+-            user=user,
+-            recipe=recipe,
+-        ).delete()
+-
+-        if deleted:
+-            return Response(status=status.HTTP_204_NO_CONTENT)
+-
+-        return Response(
+-            {'errors': 'Рецепта не было в списке покупок.'},
+-            status=status.HTTP_400_BAD_REQUEST,
+-        )
+-
+-    @action(
+-        detail=False,
+-        methods=('get',),
+-        permission_classes=(IsAuthenticated,),
+-    )
+-    def download_shopping_cart(self, request):
+-        cart_items = ShoppingCart.objects.filter(user=request.user)
+-
+-        if not cart_items.exists():
+-            return Response(
+-                {'errors': 'Список покупок пуст.'},
+-                status=status.HTTP_400_BAD_REQUEST,
+-            )
+-
+-        ingredients = cart_items.values(
+-            'recipe__recipe_ingredients__ingredient__name',
+-            'recipe__recipe_ingredients__ingredient__measurement_unit',
+-        ).annotate(
+-            total_amount=Sum('recipe__recipe_ingredients__amount')
+-        )
+-
+-        text = 'Список покупок:\n\n'
+-
+-        for item in ingredients:
+-            name = item['recipe__recipe_ingredients__ingredient__name']
+-            unit = item[
+-                'recipe__recipe_ingredients__ingredient__measurement_unit'
+-            ]
+-            amount = item['total_amount']
+-            text += f'{name} ({unit}) — {amount}\n'
+-
+-        response = HttpResponse(text, content_type='text/plain')
+-        response['Content-Disposition'] = (
+-            'attachment; filename="shopping_list.txt"'
+-        )
+-        return response
++def short_link_redirect(request, recipe_id):
++    get_object_or_404(Recipe, id=recipe_id)
++    return redirect(f'/recipes/{recipe_id}/')
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/tags.json work_backend/backend/tags.json
+--- orig_backend/backend/tags.json	1970-01-01 00:00:00.000000000 +0000
++++ work_backend/backend/tags.json	2026-07-09 08:55:02.508254921 +0000
+@@ -0,0 +1,26 @@
++[
++  {
++    "model": "recipes.tag",
++    "pk": 1,
++    "fields": {
++      "name": "Завтрак",
++      "slug": "breakfast"
++    }
++  },
++  {
++    "model": "recipes.tag",
++    "pk": 2,
++    "fields": {
++      "name": "Обед",
++      "slug": "lunch"
++    }
++  },
++  {
++    "model": "recipes.tag",
++    "pk": 3,
++    "fields": {
++      "name": "Ужин",
++      "slug": "dinner"
++    }
++  }
++]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/admin.py work_backend/backend/users/admin.py
+--- orig_backend/backend/users/admin.py	2026-07-08 18:57:00.000000000 +0000
++++ work_backend/backend/users/admin.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,36 +0,0 @@
+-from django.contrib import admin
+-from django.contrib.auth.admin import UserAdmin
+-
+-from .models import Subscription, User
+-
+-
+-@admin.register(User)
+-class CustomUserAdmin(UserAdmin):
+-    list_display = (
+-        'id',
+-        'username',
+-        'email',
+-        'first_name',
+-        'last_name',
+-    )
+-    search_fields = (
+-        'username',
+-        'email',
+-        'first_name',
+-        'last_name',
+-    )
+-
+-
+-@admin.register(Subscription)
+-class SubscriptionAdmin(admin.ModelAdmin):
+-    list_display = (
+-        'id',
+-        'user',
+-        'author',
+-    )
+-    search_fields = (
+-        'user__username',
+-        'author__username',
+-        'user__email',
+-        'author__email',
+-    )
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/apps.py work_backend/backend/users/apps.py
+--- orig_backend/backend/users/apps.py	2026-06-17 18:54:20.000000000 +0000
++++ work_backend/backend/users/apps.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,5 +0,0 @@
+-from django.apps import AppConfig
+-
+-
+-class UsersConfig(AppConfig):
+-    name = 'users'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/migrations/0001_initial.py work_backend/backend/users/migrations/0001_initial.py
+--- orig_backend/backend/users/migrations/0001_initial.py	2026-07-07 18:21:00.000000000 +0000
++++ work_backend/backend/users/migrations/0001_initial.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,60 +0,0 @@
+-# Generated by Django 6.0.6 on 2026-07-07 15:20
+-
+-import django.contrib.auth.models
+-import django.contrib.auth.validators
+-import django.db.models.deletion
+-import django.utils.timezone
+-from django.conf import settings
+-from django.db import migrations, models
+-
+-
+-class Migration(migrations.Migration):
+-
+-    initial = True
+-
+-    dependencies = [
+-        ('auth', '0012_alter_user_first_name_max_length'),
+-    ]
+-
+-    operations = [
+-        migrations.CreateModel(
+-            name='User',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('password', models.CharField(max_length=128, verbose_name='password')),
+-                ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
+-                ('is_superuser', models.BooleanField(default=False, help_text='Designates that this user has all permissions without explicitly assigning them.', verbose_name='superuser status')),
+-                ('username', models.CharField(error_messages={'unique': 'A user with that username already exists.'}, help_text='Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.', max_length=150, unique=True, validators=[django.contrib.auth.validators.UnicodeUsernameValidator()], verbose_name='username')),
+-                ('first_name', models.CharField(blank=True, max_length=150, verbose_name='first name')),
+-                ('last_name', models.CharField(blank=True, max_length=150, verbose_name='last name')),
+-                ('is_staff', models.BooleanField(default=False, help_text='Designates whether the user can log into this admin site.', verbose_name='staff status')),
+-                ('is_active', models.BooleanField(default=True, help_text='Designates whether this user should be treated as active. Unselect this instead of deleting accounts.', verbose_name='active')),
+-                ('date_joined', models.DateTimeField(default=django.utils.timezone.now, verbose_name='date joined')),
+-                ('email', models.EmailField(max_length=254, unique=True, verbose_name='Электронная почта')),
+-                ('avatar', models.ImageField(blank=True, null=True, upload_to='avatar/', verbose_name='Аватар')),
+-                ('groups', models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups')),
+-                ('user_permissions', models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions')),
+-            ],
+-            options={
+-                'verbose_name': 'user',
+-                'verbose_name_plural': 'users',
+-                'abstract': False,
+-            },
+-            managers=[
+-                ('objects', django.contrib.auth.models.UserManager()),
+-            ],
+-        ),
+-        migrations.CreateModel(
+-            name='Subscription',
+-            fields=[
+-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+-                ('author', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='subscribers', to=settings.AUTH_USER_MODEL, verbose_name='Автор')),
+-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='subscriptions', to=settings.AUTH_USER_MODEL, verbose_name='Подписчик')),
+-            ],
+-            options={
+-                'verbose_name': 'Подписка',
+-                'verbose_name_plural': 'Подписки',
+-                'unique_together': {('user', 'author')},
+-            },
+-        ),
+-    ]
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/models.py work_backend/backend/users/models.py
+--- orig_backend/backend/users/models.py	2026-06-29 21:05:54.000000000 +0000
++++ work_backend/backend/users/models.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,41 +0,0 @@
+-from django.db import models
+-from django.contrib.auth.models import AbstractUser
+-
+-
+-class User(AbstractUser):
+-    email = models.EmailField(
+-        unique=True,
+-        verbose_name='Электронная почта'
+-    )
+-    avatar = models.ImageField(
+-        upload_to='avatar/',
+-        blank=True,
+-        null=True,
+-        verbose_name='Аватар'
+-    )
+-
+-    USERNAME_FIELD = 'email'
+-    REQUIRED_FIELDS = ['username']
+-
+-
+-class Subscription(models.Model):
+-    user = models.ForeignKey(
+-        User,
+-        on_delete=models.CASCADE,
+-        related_name='subscriptions',
+-        verbose_name='Подписчик'
+-    )
+-    author = models.ForeignKey(
+-        User,
+-        on_delete=models.CASCADE,
+-        related_name='subscribers',
+-        verbose_name='Автор'
+-    )
+-
+-    class Meta:
+-        unique_together = ('user', 'author')
+-        verbose_name = 'Подписка'
+-        verbose_name_plural = 'Подписки'
+-
+-    def __str__(self):
+-        return f'{self.user.username} подписан на {self.author.username}'
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/serializers.py work_backend/backend/users/serializers.py
+--- orig_backend/backend/users/serializers.py	2026-07-08 20:34:12.000000000 +0000
++++ work_backend/backend/users/serializers.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,85 +0,0 @@
+-from djoser.serializers import (
+-    UserCreateSerializer as DjoserUserCreateSerializer)
+-from djoser.serializers import UserSerializer as DjoserUserSerializer
+-from rest_framework import serializers
+-
+-from .models import User, Subscription
+-
+-
+-class UserSerializer(DjoserUserSerializer):
+-    is_subscribed = serializers.SerializerMethodField()
+-    avatar = serializers.SerializerMethodField()
+-
+-    class Meta:
+-        model = User
+-        fields = (
+-            'id', 'username', 'first_name', 'last_name',
+-            'email', 'is_subscribed', 'avatar'
+-        )
+-
+-    def get_is_subscribed(self, obj):
+-        request = self.context.get('request')
+-        if request and request.user.is_authenticated:
+-            return obj.subscribers.filter(user=request.user).exists()
+-        return False
+-
+-    def get_avatar(self, obj):
+-        if obj.avatar:
+-            request = self.context.get('request')
+-            if request:
+-                return request.build_absolute_uri(obj.avatar.url)
+-            return obj.avatar.url
+-        return None
+-
+-
+-class UserCreateSerializer(DjoserUserCreateSerializer):
+-    first_name = serializers.CharField(required=True, max_length=150)
+-    last_name = serializers.CharField(required=True, max_length=150)
+-
+-    class Meta:
+-        model = User
+-        fields = (
+-            'id', 'email', 'username',
+-            'first_name', 'last_name', 'password'
+-        )
+-        extra_kwargs = {'password': {'write_only': True}}
+-
+-
+-class SubscriptionSerializer(serializers.ModelSerializer):
+-    author = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
+-
+-    class Meta:
+-        model = Subscription
+-        fields = ('id', 'user', 'author')
+-        read_only_fields = ('user',)
+-
+-
+-class SubscriptionUserSerializer(UserSerializer):
+-    recipes = serializers.SerializerMethodField()
+-    recipes_count = serializers.SerializerMethodField()
+-
+-    class Meta(UserSerializer.Meta):
+-        fields = UserSerializer.Meta.fields + ('recipes', 'recipes_count')
+-
+-    def get_recipes_count(self, obj):
+-        return obj.recipes.count()
+-
+-    def get_recipes(self, obj):
+-        from recipes.serializers import RecipeShortSerializer
+-
+-        request = self.context.get('request')
+-        recipes = obj.recipes.all()
+-
+-        if request:
+-            recipes_limit = request.query_params.get('recipes_limit')
+-            if recipes_limit:
+-                try:
+-                    recipes = recipes[:int(recipes_limit)]
+-                except (TypeError, ValueError):
+-                    pass
+-
+-        return RecipeShortSerializer(
+-            recipes,
+-            many=True,
+-            context=self.context
+-        ).data
+diff -ruN '--exclude=venv' '--exclude=media' '--exclude=staticfiles' '--exclude=__pycache__' '--exclude=db.sqlite3' '--exclude=.env' '--exclude=ingredients.json' '--exclude=data/ingredients.json' '--exclude=ingredients.csv' orig_backend/backend/users/views.py work_backend/backend/users/views.py
+--- orig_backend/backend/users/views.py	2026-07-08 20:31:34.000000000 +0000
++++ work_backend/backend/users/views.py	1970-01-01 00:00:00.000000000 +0000
+@@ -1,146 +0,0 @@
+-import base64
+-import binascii
+-
+-from django.core.files.base import ContentFile
+-from django.shortcuts import get_object_or_404
+-from djoser.views import UserViewSet as DjoserUserViewSet
+-from rest_framework import status, viewsets
+-from rest_framework.decorators import action
+-from rest_framework.permissions import AllowAny, IsAuthenticated
+-from rest_framework.response import Response
+-
+-from .models import Subscription, User
+-from .serializers import (
+-    SubscriptionSerializer,
+-    SubscriptionUserSerializer,
+-    UserCreateSerializer,
+-    UserSerializer,
+-)
+-
+-
+-class SubscriptionViewSet(viewsets.ModelViewSet):
+-    permission_classes = (IsAuthenticated,)
+-    queryset = Subscription.objects.all()
+-    serializer_class = SubscriptionSerializer
+-
+-    @action(detail=True, methods=('post', 'delete'))
+-    def subscribe(self, request, pk=None):
+-        user = request.user
+-        author = get_object_or_404(User, pk=pk)
+-
+-        if user == author:
+-            return Response(
+-                {'errors': 'Нельзя подписаться на самого себя.'},
+-                status=status.HTTP_400_BAD_REQUEST,
+-            )
+-
+-        if request.method == 'POST':
+-            _, created = Subscription.objects.get_or_create(
+-                user=user,
+-                author=author,
+-            )
+-            if not created:
+-                return Response(
+-                    {'errors': 'Вы уже подписаны на этого пользователя.'},
+-                    status=status.HTTP_400_BAD_REQUEST,
+-                )
+-            serializer = SubscriptionUserSerializer(
+-                author,
+-                context={'request': request},
+-            )
+-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+-
+-        deleted, _ = Subscription.objects.filter(
+-            user=user,
+-            author=author,
+-        ).delete()
+-        if deleted:
+-            return Response(status=status.HTTP_204_NO_CONTENT)
+-        return Response(
+-            {'errors': 'Вы не были подписаны на этого пользователя.'},
+-            status=status.HTTP_400_BAD_REQUEST,
+-        )
+-
+-
+-class CustomUserViewSet(DjoserUserViewSet):
+-    serializer_class = UserSerializer
+-
+-    def get_permissions(self):
+-        if self.action in ('list', 'retrieve'):
+-            return (AllowAny(),)
+-        if self.action in ('me', 'avatar', 'set_password', 'subscriptions'):
+-            return (IsAuthenticated(),)
+-        return super().get_permissions()
+-
+-    def get_serializer_class(self):
+-        if self.action == 'create':
+-            return UserCreateSerializer
+-        if self.action == 'subscriptions':
+-            return SubscriptionUserSerializer
+-        if self.action in ('list', 'retrieve', 'me'):
+-            return UserSerializer
+-        return super().get_serializer_class()
+-
+-    def get_queryset(self):
+-        if self.action == 'me':
+-            return User.objects.filter(id=self.request.user.id)
+-        return User.objects.all().order_by('id')
+-
+-    @action(detail=False, methods=('get',),
+-            permission_classes=(IsAuthenticated,))
+-    def subscriptions(self, request):
+-        queryset = User.objects.filter(
+-            subscribers__user=request.user).order_by('id')
+-        page = self.paginate_queryset(queryset)
+-        if page is not None:
+-            serializer = SubscriptionUserSerializer(
+-                page,
+-                many=True,
+-                context={'request': request},
+-            )
+-            return self.get_paginated_response(serializer.data)
+-
+-        serializer = SubscriptionUserSerializer(
+-            queryset,
+-            many=True,
+-            context={'request': request},
+-        )
+-        return Response(serializer.data)
+-
+-    @action(detail=False, methods=('put', 'delete'), url_path='me/avatar')
+-    def avatar(self, request):
+-        user = request.user
+-
+-        if request.method == 'PUT':
+-            avatar_data = request.data.get('avatar')
+-            if not avatar_data:
+-                return Response(
+-                    {'errors': 'Аватар не предоставлен.'},
+-                    status=status.HTTP_400_BAD_REQUEST,
+-                )
+-
+-            if isinstance(avatar_data, str) and ';base64,' in avatar_data:
+-                try:
+-                    file_format, imgstr = avatar_data.split(';base64,')
+-                    ext = file_format.split('/')[-1]
+-                    user.avatar = ContentFile(
+-                        base64.b64decode(imgstr),
+-                        name=f'avatar.{ext}',
+-                    )
+-                except (TypeError, ValueError, binascii.Error):
+-                    return Response(
+-                        {'errors': 'Некорректный формат изображения.'},
+-                        status=status.HTTP_400_BAD_REQUEST,
+-                    )
+-            else:
+-                user.avatar = avatar_data
+-
+-            user.save()
+-            return Response({
+-                'avatar': request.build_absolute_uri(user.avatar.url)
+-                if user.avatar else None
+-            })
+-
+-        if user.avatar:
+-            user.avatar.delete(save=True)
+-        return Response(status=status.HTTP_204_NO_CONTENT)

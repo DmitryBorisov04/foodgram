@@ -38,7 +38,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      - static:/static
+      - static:/backend_static
       - media:/media
       - frontend_static:/usr/share/nginx/html
     restart: always
