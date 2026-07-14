@@ -8,6 +8,7 @@ Django==4.2.30
 django-filter==23.5
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
+drf_extra_fields==3.7.0
 djoser==2.3.3
 idna==3.18
 oauthlib==3.3.1
