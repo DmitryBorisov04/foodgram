@@ -1,5 +1,5 @@
 from django.contrib.auth.models import AbstractUser
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 
 MIN_COOKING_TIME = 1
@@ -7,9 +7,32 @@ MIN_PRODUCT_AMOUNT = 1
 
 
 class User(AbstractUser):
+    username = models.CharField(
+        max_length=150,
+        unique=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[\w.@+-]+\Z',
+                message=(
+                    'Ник может содержать только буквы, цифры '
+                    'и символы @/./+/-/_.'
+                ),
+            )
+        ],
+        verbose_name='Ник',
+    )
     email = models.EmailField(
+        max_length=254,
         unique=True,
         verbose_name='Электронная почта',
+    )
+    first_name = models.CharField(
+        max_length=150,
+        verbose_name='Имя',
+    )
+    last_name = models.CharField(
+        max_length=150,
+        verbose_name='Фамилия',
     )
     avatar = models.ImageField(
         upload_to='avatar/',
@@ -22,7 +45,7 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ('username', 'first_name', 'last_name')
 
     class Meta:
-        ordering = ('id',)
+        ordering = ('username',)
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'
 
@@ -32,16 +55,16 @@ class User(AbstractUser):
 
 class Product(models.Model):
     name = models.CharField(
-        max_length=200,
+        max_length=128,
         verbose_name='Название продукта',
     )
     measurement_unit = models.CharField(
-        max_length=100,
+        max_length=64,
         verbose_name='Единица измерения',
     )
 
     class Meta:
-        ordering = ('name', 'id')
+        ordering = ('name', 'measurement_unit')
         constraints = (
             models.UniqueConstraint(
                 fields=('name', 'measurement_unit'),
@@ -57,16 +80,17 @@ class Product(models.Model):
 
 class Tag(models.Model):
     name = models.CharField(
-        max_length=100,
-        verbose_name='Название тега',
+        max_length=32,
+        verbose_name='Название',
     )
     slug = models.SlugField(
         unique=True,
-        verbose_name='Слаг тега',
+        verbose_name='Слаг',
+        max_length=32,
     )
 
     class Meta:
-        ordering = ('id',)
+        ordering = ('name',)
         verbose_name = 'Тег'
         verbose_name_plural = 'Теги'
 
@@ -76,13 +100,12 @@ class Tag(models.Model):
 
 class Recipe(models.Model):
     name = models.CharField(
-        max_length=200,
-        verbose_name='Название рецепта',
+        max_length=128,
+        verbose_name='Название',
     )
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='recipes',
         verbose_name='Автор рецепта',
     )
     tags = models.ManyToManyField(
@@ -96,7 +119,6 @@ class Recipe(models.Model):
     cooking_time = models.PositiveIntegerField(
         validators=(MinValueValidator(MIN_COOKING_TIME),),
         verbose_name='Время приготовления',
-        help_text='Введите время приготовления в минутах',
     )
     image = models.ImageField(
         upload_to='recipes/',
@@ -114,7 +136,8 @@ class Recipe(models.Model):
     )
 
     class Meta:
-        ordering = ('-created_at', 'id')
+        ordering = ('name',)
+        default_related_name = 'recipes'
         verbose_name = 'Рецепт'
         verbose_name_plural = 'Рецепты'
 
@@ -138,7 +161,6 @@ class RecipeProduct(models.Model):
     amount = models.PositiveIntegerField(
         validators=(MinValueValidator(MIN_PRODUCT_AMOUNT),),
         verbose_name='Количество продукта',
-        help_text='Введите количество продукта',
     )
 
     class Meta:
@@ -169,16 +191,12 @@ class Subscription(models.Model):
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='subscribers',
+        related_name='author_subscriptions',
         verbose_name='Автор',
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата подписки',
     )
 
     class Meta:
-        ordering = ('-created_at',)
+        ordering = ('user__username', 'author__username')
         constraints = (
             models.UniqueConstraint(
                 fields=('user', 'author'),
@@ -192,67 +210,42 @@ class Subscription(models.Model):
         return f'{self.user} подписан на {self.author}'
 
 
-class Favorite(models.Model):
+class UserRecipeRelation(models.Model):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='favorite_recipes',
         verbose_name='Пользователь',
     )
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,
-        related_name='favorites',
         verbose_name='Рецепт',
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата добавления',
     )
 
     class Meta:
-        ordering = ('-created_at',)
+        abstract = True
         constraints = (
             models.UniqueConstraint(
                 fields=('user', 'recipe'),
-                name='unique_favorite_recipe',
+                name='unique_%(class)s_user_recipe',
             ),
         )
+
+    def __str__(self):
+        return f'{self.user} — {self.recipe}'
+
+
+class Favorite(UserRecipeRelation):
+
+    class Meta(UserRecipeRelation.Meta):
+        default_related_name = 'favorites'
         verbose_name = 'Избранный рецепт'
         verbose_name_plural = 'Избранные рецепты'
 
-    def __str__(self):
-        return f'{self.user} добавил {self.recipe} в избранное'
 
+class ShoppingCart(UserRecipeRelation):
 
-class ShoppingCart(models.Model):
-    user = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='cart_recipes',
-        verbose_name='Пользователь',
-    )
-    recipe = models.ForeignKey(
-        Recipe,
-        on_delete=models.CASCADE,
-        related_name='shopping_cart',
-        verbose_name='Рецепт',
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата добавления',
-    )
-
-    class Meta:
-        ordering = ('-created_at',)
-        constraints = (
-            models.UniqueConstraint(
-                fields=('user', 'recipe'),
-                name='unique_shopping_cart_recipe',
-            ),
-        )
-        verbose_name = 'Позиция списка покупок'
-        verbose_name_plural = 'Список покупок'
-
-    def __str__(self):
-        return f'{self.user} добавил {self.recipe} в список покупок'
+    class Meta(UserRecipeRelation.Meta):
+        default_related_name = 'shopping_cart'
+        verbose_name = 'Рецепт в списке покупок'
+        verbose_name_plural = 'Рецепты в списке покупок'
