@@ -85,7 +85,7 @@ class Tag(models.Model):
     )
     slug = models.SlugField(
         unique=True,
-        verbose_name='Слаг',
+        verbose_name='URL-идентификатор',
         max_length=32,
     )
 
@@ -110,7 +110,6 @@ class Recipe(models.Model):
     )
     tags = models.ManyToManyField(
         Tag,
-        related_name='recipes',
         verbose_name='Теги',
     )
     text = models.TextField(
@@ -127,7 +126,6 @@ class Recipe(models.Model):
     products = models.ManyToManyField(
         Product,
         through='RecipeProduct',
-        related_name='recipes',
         verbose_name='Продукты',
     )
     created_at = models.DateTimeField(
@@ -149,13 +147,11 @@ class RecipeProduct(models.Model):
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,
-        related_name='recipe_products',
         verbose_name='Рецепт',
     )
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
-        related_name='recipe_products',
         verbose_name='Продукт',
     )
     amount = models.PositiveIntegerField(
@@ -173,6 +169,7 @@ class RecipeProduct(models.Model):
         )
         verbose_name = 'Продукт рецепта'
         verbose_name_plural = 'Продукты рецепта'
+        default_related_name = 'recipe_products'
 
     def __str__(self):
         return (
@@ -224,6 +221,7 @@ class UserRecipeRelation(models.Model):
 
     class Meta:
         abstract = True
+        default_related_name = '%(class)ss'
         constraints = (
             models.UniqueConstraint(
                 fields=('user', 'recipe'),
@@ -238,7 +236,6 @@ class UserRecipeRelation(models.Model):
 class Favorite(UserRecipeRelation):
 
     class Meta(UserRecipeRelation.Meta):
-        default_related_name = 'favorites'
         verbose_name = 'Избранный рецепт'
         verbose_name_plural = 'Избранные рецепты'
 
@@ -246,6 +243,5 @@ class Favorite(UserRecipeRelation):
 class ShoppingCart(UserRecipeRelation):
 
     class Meta(UserRecipeRelation.Meta):
-        default_related_name = 'shopping_cart'
         verbose_name = 'Рецепт в списке покупок'
         verbose_name_plural = 'Рецепты в списке покупок'

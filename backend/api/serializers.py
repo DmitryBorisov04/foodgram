@@ -14,23 +14,17 @@ from recipes.models import (
     Tag,
     User,
     Subscription,
+    MIN_PRODUCT_AMOUNT,
+    MIN_COOKING_TIME,
 )
-
-MIN_VALUE_AMOUNT = 1
-MIN_VALUE_COOKING_TIME = 1
 
 
 class UserSerializer(DjoserUserSerializer):
     is_subscribed = serializers.SerializerMethodField()
 
-    class Meta:
-        model = User
+    class Meta(DjoserUserSerializer.Meta):
         fields: tuple[str, ...] = (
-            'id',
-            'username',
-            'first_name',
-            'last_name',
-            'email',
+            *DjoserUserSerializer.Meta.fields,
             'is_subscribed',
             'avatar',
         )
@@ -126,16 +120,16 @@ class RecipeReadSerializer(serializers.ModelSerializer):
             ).exists()
         )
 
-    def get_is_favorited(self, obj):
-        return self._is_recipe_in_user_list(Favorite, obj)
+    def get_is_favorited(self, recipe):
+        return self._is_recipe_in_user_list(Favorite, recipe)
 
-    def get_is_in_shopping_cart(self, obj):
-        return self._is_recipe_in_user_list(ShoppingCart, obj)
+    def get_is_in_shopping_cart(self, recipe):
+        return self._is_recipe_in_user_list(ShoppingCart, recipe)
 
 
 class ProductAmountSerializer(serializers.Serializer):
     id = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
-    amount = serializers.IntegerField(min_value=MIN_VALUE_AMOUNT)
+    amount = serializers.IntegerField(min_value=MIN_PRODUCT_AMOUNT)
 
 
 class RecipeWriteSerializer(serializers.ModelSerializer):
@@ -145,7 +139,7 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         queryset=Tag.objects.all(),
     )
     image = Base64ImageField(required=True, allow_null=False)
-    cooking_time = serializers.IntegerField(min_value=MIN_VALUE_COOKING_TIME)
+    cooking_time = serializers.IntegerField(min_value=MIN_COOKING_TIME)
 
     class Meta:
         model = Recipe
@@ -158,63 +152,51 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
             'cooking_time',
         )
 
-    def validate_ingredients(self, value):
+    def _validate_unique_items(
+        self,
+        value,
+        items,
+        empty_message,
+        duplicate_message,
+    ):
         if not value:
-            raise serializers.ValidationError(
-                'Список продуктов не может быть пустым.'
-            )
+            raise serializers.ValidationError(empty_message)
 
-        products = [item['id'] for item in value]
-        product_ids = [product.id for product in products]
-
-        duplicate_ids = [
-            product_id
-            for product_id, count in Counter(product_ids).items()
+        item_ids = [item.id for item in items]
+        duplicate_ids = {
+            item_id
+            for item_id, count in Counter(item_ids).items()
             if count > 1
-        ]
+        }
 
         if duplicate_ids:
-            duplicate_names = [
-                product.name
-                for product in products
-                if product.id in duplicate_ids
-            ]
-            duplicate_names = sorted(set(duplicate_names))
+            duplicate_names = {
+                item.name
+                for item in items
+                if item.id in duplicate_ids
+            }
 
             raise serializers.ValidationError(
-                'Продукты не должны повторяться: '
-                f'{", ".join(duplicate_names)}.'
+                f'{duplicate_message}: {duplicate_names}.'
             )
 
         return value
+
+    def validate_ingredients(self, value):
+        return self._validate_unique_items(
+            value=value,
+            items=[item['id'] for item in value],
+            empty_message='Список продуктов не может быть пустым.',
+            duplicate_message='Продукты не должны повторяться',
+        )
 
     def validate_tags(self, value):
-        if not value:
-            raise serializers.ValidationError(
-                'Список тегов не может быть пустым.'
-            )
-
-        tag_ids = [tag.id for tag in value]
-        duplicate_ids = [
-            tag_id
-            for tag_id, count in Counter(tag_ids).items()
-            if count > 1
-        ]
-
-        if duplicate_ids:
-            duplicate_names = [
-                tag.name
-                for tag in value
-                if tag.id in duplicate_ids
-            ]
-            duplicate_names = sorted(set(duplicate_names))
-
-            raise serializers.ValidationError(
-                'Теги не должны повторяться: '
-                f'{", ".join(duplicate_names)}.'
-            )
-
-        return value
+        return self._validate_unique_items(
+            value=value,
+            items=value,
+            empty_message='Список тегов не может быть пустым.',
+            duplicate_message='Теги не должны повторяться',
+        )
 
     def validate(self, attrs):
         if self.instance is not None:
@@ -243,12 +225,11 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         return recipe
 
     def update(self, instance, validated_data):
-        if 'ingredients' in validated_data:
-            products_data = validated_data.pop('ingredients')
-            instance.recipe_products.all().delete()
-            self.create_products(instance, products_data)
-
-        return super().update(instance, validated_data)
+        products_data = validated_data.pop('ingredients')
+        recipe = super().update(instance, validated_data)
+        recipe.recipe_products.all().delete()
+        self.create_products(recipe, products_data)
+        return recipe
 
     def to_representation(self, instance):
         return RecipeReadSerializer(instance, context=self.context).data
@@ -268,12 +249,12 @@ class SubscriptionUserSerializer(UserSerializer):
             'recipes_count',
         )
 
-    def get_recipes_count(self, obj):
-        return obj.recipes.count()
+    def get_recipes_count(self, recipes_data):
+        return recipes_data.recipes.count()
 
-    def get_recipes(self, obj):
+    def get_recipes(self, recipes_data):
         request = self.context.get('request')
-        recipes = obj.recipes.all()
+        recipes = recipes_data.recipes.all()
         if request:
             recipes_limit = request.query_params.get('recipes_limit')
             if recipes_limit:

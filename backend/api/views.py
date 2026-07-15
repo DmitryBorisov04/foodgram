@@ -19,7 +19,6 @@ from recipes.models import (
     Tag,
     User,
 )
-
 from .services import build_shopping_list
 from .filters import RecipeFilter, ProductFilter
 from .permissions import IsAuthorOrReadOnly
@@ -157,7 +156,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     )
     def get_link(self, request, pk=None):
         if not Recipe.objects.filter(pk=pk).exists():
-            raise NotFound('Рецепт не найден.')
+            raise NotFound(f'Рецепт {pk} не найден.')
 
         return Response(
             {
@@ -209,14 +208,19 @@ class RecipeViewSet(viewsets.ModelViewSet):
         )
 
         if not created:
-            raise ValidationError(
-                {'errors': 'Рецепт уже добавлен.'}
+            relation_name = (
+                'избранное'
+                if model is Favorite
+                else 'список покупок'
             )
-
-        return Response(
-            RecipeShortSerializer(recipe).data,
-            status=status.HTTP_201_CREATED,
-        )
+            raise ValidationError(
+                {
+                    'errors': (
+                        f'Рецепт «{recipe.name}» уже добавлен '
+                        f'в {relation_name}.'
+                    )
+                }
+            )
 
     @action(
         detail=False,
