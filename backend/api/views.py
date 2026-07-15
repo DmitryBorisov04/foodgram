@@ -26,6 +26,7 @@ from .serializers import (
     AvatarSerializer,
     ProductSerializer,
     RecipeReadSerializer,
+    RecipeShortSerializer,
     RecipeWriteSerializer,
     SubscriptionUserSerializer,
     TagSerializer,
@@ -207,19 +208,19 @@ class RecipeViewSet(viewsets.ModelViewSet):
         )
 
         if not created:
-            relation_name = (
-                'избранное'
-                if model is Favorite
-                else 'список покупок'
-            )
             raise ValidationError(
                 {
                     'errors': (
-                        f'Рецепт «{recipe.name}» уже добавлен '
-                        f'в {relation_name}.'
+                        f'{model._meta.verbose_name.capitalize()} '
+                        f'«{recipe.name}» уже существует.'
                     )
                 }
             )
+
+        return Response(
+            RecipeShortSerializer(recipe).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(
         detail=False,

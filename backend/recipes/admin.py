@@ -2,7 +2,6 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.db.models import Count
 from django.utils.safestring import mark_safe
-from django.utils.html import format_html_join
 
 from .models import (
     MIN_COOKING_TIME,
@@ -41,8 +40,6 @@ class HasRelatedFilter(admin.SimpleListFilter):
         return self.choices
 
     def queryset(self, request, queryset):
-        if self.related_name is None:
-            return queryset
 
         if self.value() == 'yes':
             return queryset.filter(
@@ -96,13 +93,13 @@ class CookingTimeFilter(admin.SimpleListFilter):
             ),
         }
 
-    def queryset(self, request, queryset):
+    def queryset(self, request, recipes):
         selected_range = self.ranges.get(self.value())
 
         if selected_range is None:
-            return queryset
+            return recipes
 
-        return queryset.filter(
+        return recipes.filter(
             cooking_time__range=selected_range
         )
 
@@ -175,7 +172,7 @@ class RecipeAdmin(admin.ModelAdmin):
         'author__username',
         'author__email',
         'tags__name',
-        'recipe_products__product__name',
+        'products__name',
     )
     list_filter = (
         'tags',
@@ -214,10 +211,8 @@ class RecipeAdmin(admin.ModelAdmin):
 
     @admin.display(description='Теги')
     def tags_display(self, recipe):
-        return format_html_join(
-            '',
-            '{}<br>',
-            ((tag.name,) for tag in recipe.tags.all()),
+        return mark_safe(
+            '<br>'.join(tag.name for tag in recipe.tags.all())
         )
 
     @admin.display(description='Картинка')

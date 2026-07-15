@@ -85,7 +85,7 @@ class Tag(models.Model):
     )
     slug = models.SlugField(
         unique=True,
-        verbose_name='URL-идентификатор',
+        verbose_name='идентификатор',
         max_length=32,
     )
 

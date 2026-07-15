@@ -133,6 +133,10 @@ class ProductAmountSerializer(serializers.Serializer):
 
 
 class RecipeWriteSerializer(serializers.ModelSerializer):
+
+    EMPTY_LIST_ERROR = 'Список {items} не может быть пустым.'
+    DUPLICATE_ITEMS_ERROR = '{items} не должны повторяться: {duplicates}.'
+
     ingredients = ProductAmountSerializer(many=True)
     tags = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -156,11 +160,13 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         self,
         value,
         items,
-        empty_message,
-        duplicate_message,
+        empty_items_name,
+        duplicate_items_name,
     ):
         if not value:
-            raise serializers.ValidationError(empty_message)
+            raise serializers.ValidationError(
+                self.EMPTY_LIST_ERROR.format(items=empty_items_name)
+            )
 
         item_ids = [item.id for item in items]
         duplicate_ids = {
@@ -175,9 +181,11 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
                 for item in items
                 if item.id in duplicate_ids
             }
-
             raise serializers.ValidationError(
-                f'{duplicate_message}: {duplicate_names}.'
+                self.DUPLICATE_ITEMS_ERROR.format(
+                    items=duplicate_items_name,
+                    duplicates=duplicate_names,
+                )
             )
 
         return value
@@ -186,16 +194,16 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         return self._validate_unique_items(
             value=value,
             items=[item['id'] for item in value],
-            empty_message='Список продуктов не может быть пустым.',
-            duplicate_message='Продукты не должны повторяться',
+            empty_items_name='продуктов',
+            duplicate_items_name='Продукты',
         )
 
     def validate_tags(self, value):
         return self._validate_unique_items(
             value=value,
             items=value,
-            empty_message='Список тегов не может быть пустым.',
-            duplicate_message='Теги не должны повторяться',
+            empty_items_name='тегов',
+            duplicate_items_name='Теги',
         )
 
     def validate(self, attrs):
@@ -219,16 +227,24 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         )
 
     def create(self, validated_data):
+        tags = validated_data.pop('tags')
         products_data = validated_data.pop('ingredients')
+
         recipe = super().create(validated_data)
         self.create_products(recipe, products_data)
+        recipe.tags.set(tags)
+
         return recipe
 
     def update(self, instance, validated_data):
+        tags = validated_data.pop('tags')
         products_data = validated_data.pop('ingredients')
+
         recipe = super().update(instance, validated_data)
         recipe.recipe_products.all().delete()
         self.create_products(recipe, products_data)
+        recipe.tags.set(tags)
+
         return recipe
 
     def to_representation(self, instance):
@@ -248,9 +264,6 @@ class SubscriptionUserSerializer(UserSerializer):
             'recipes',
             'recipes_count',
         )
-
-    def get_recipes_count(self, recipes_data):
-        return recipes_data.recipes.count()
 
     def get_recipes(self, recipes_data):
         request = self.context.get('request')
