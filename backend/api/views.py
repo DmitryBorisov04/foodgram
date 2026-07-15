@@ -26,7 +26,6 @@ from .serializers import (
     AvatarSerializer,
     ProductSerializer,
     RecipeReadSerializer,
-    RecipeShortSerializer,
     RecipeWriteSerializer,
     SubscriptionUserSerializer,
     TagSerializer,
