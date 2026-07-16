@@ -1,10 +1,11 @@
 from django.contrib import admin
+from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
-from django.db.models import Count
+from django.contrib.auth.models import Group
+from django.db.models import Count, Q
 from django.utils.safestring import mark_safe
 
 from .models import (
-    MIN_COOKING_TIME,
     Favorite,
     Product,
     Recipe,
@@ -16,30 +17,25 @@ from .models import (
 )
 
 
-class RecipesCountAdminMixin:
-    list_display = ('recipes_count',)
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).annotate(
-            recipes_total=Count('recipes', distinct=True),
-        )
-
-    @admin.display(description='Рецептов')
-    def recipes_count(self, item):
-        return item.recipes_total
+try:
+    admin.site.unregister(Group)
+except NotRegistered:
+    pass
 
 
 class HasRelatedFilter(admin.SimpleListFilter):
     related_name: str | None = None
-    choices = (
+    filter_choices = (
         ('yes', 'Да'),
         ('no', 'Нет'),
     )
 
     def lookups(self, request, model_admin):
-        return self.choices
+        return self.filter_choices
 
     def queryset(self, request, queryset):
+        if self.related_name is None:
+            return queryset
 
         if self.value() == 'yes':
             return queryset.filter(
@@ -69,7 +65,13 @@ class HasSubscriptionsFilter(HasRelatedFilter):
 class HasSubscribersFilter(HasRelatedFilter):
     title = 'есть подписчики'
     parameter_name = 'has_subscribers'
-    related_name = 'subscribers'
+    related_name = 'author_subscriptions'
+
+
+class ProductInRecipesFilter(HasRelatedFilter):
+    title = 'есть в рецептах'
+    parameter_name = 'has_recipes'
+    related_name = 'recipe_products'
 
 
 class CookingTimeFilter(admin.SimpleListFilter):
@@ -78,11 +80,15 @@ class CookingTimeFilter(admin.SimpleListFilter):
 
     FAST_LIMIT = 30
     MEDIUM_LIMIT = 60
+    MIN_COOKING_TIME = 1
     MAX_COOKING_TIME = 2_147_483_647
 
-    def lookups(self, request, model_admin):
+    def _set_ranges(self):
         self.ranges = {
-            'fast': (MIN_COOKING_TIME, self.FAST_LIMIT - 1),
+            'fast': (
+                self.MIN_COOKING_TIME,
+                self.FAST_LIMIT - 1,
+            ),
             'medium': (
                 self.FAST_LIMIT,
                 self.MEDIUM_LIMIT - 1,
@@ -93,15 +99,64 @@ class CookingTimeFilter(admin.SimpleListFilter):
             ),
         }
 
-    def queryset(self, request, recipes):
+    def lookups(self, request, model_admin):
+        self._set_ranges()
+
+        counts = Recipe.objects.aggregate(
+            fast=Count(
+                'id',
+                filter=Q(cooking_time__range=self.ranges['fast']),
+            ),
+            medium=Count(
+                'id',
+                filter=Q(cooking_time__range=self.ranges['medium']),
+            ),
+            long=Count(
+                'id',
+                filter=Q(cooking_time__range=self.ranges['long']),
+            ),
+        )
+
+        return (
+            (
+                'fast',
+                f'быстрее {self.FAST_LIMIT} мин ({counts["fast"]})',
+            ),
+            (
+                'medium',
+                f'быстрее {self.MEDIUM_LIMIT} мин ({counts["medium"]})',
+            ),
+            (
+                'long',
+                f'долго ({counts["long"]})',
+            ),
+        )
+
+    def queryset(self, request, queryset):
+        self._set_ranges()
         selected_range = self.ranges.get(self.value())
 
         if selected_range is None:
-            return recipes
+            return queryset
 
-        return recipes.filter(
-            cooking_time__range=selected_range
+        return queryset.filter(cooking_time__range=selected_range)
+
+
+class RecipesCountAdminMixin:
+    list_display = ('recipes_count',)
+    recipes_count_field = 'recipes'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(
+            recipes_total=Count(
+                self.recipes_count_field,
+                distinct=True,
+            ),
         )
+
+    @admin.display(description='Рецептов')
+    def recipes_count(self, item):
+        return item.recipes_total
 
 
 @admin.register(User)
@@ -116,10 +171,39 @@ class UserAdmin(RecipesCountAdminMixin, DjangoUserAdmin):
         'subscriptions_count',
         'subscribers_count',
     )
+    search_fields = (
+        'username',
+        'email',
+        'first_name',
+        'last_name',
+    )
+    list_filter = (
+        'is_staff',
+        'is_active',
+        'date_joined',
+        HasRecipesFilter,
+        HasSubscriptionsFilter,
+        HasSubscribersFilter,
+    )
+    readonly_fields = ('avatar_preview',)
+    fieldsets = DjangoUserAdmin.fieldsets + (
+        (
+            'Аватар',
+            {
+                'fields': (
+                    'avatar',
+                    'avatar_preview',
+                ),
+            },
+        ),
+    )
 
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(
-            subscriptions_total=Count('subscriptions', distinct=True),
+            subscriptions_total=Count(
+                'subscriptions',
+                distinct=True,
+            ),
             subscribers_total=Count(
                 'author_subscriptions',
                 distinct=True,
@@ -134,6 +218,7 @@ class UserAdmin(RecipesCountAdminMixin, DjangoUserAdmin):
     def avatar_preview(self, user):
         if not user.avatar:
             return '-'
+
         return mark_safe(
             f'<img src="{user.avatar.url}" '
             f'width="50" height="50" '
@@ -160,7 +245,7 @@ class RecipeAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'name',
-        'cooking_time',
+        'cooking_time_display',
         'author',
         'favorites_count',
         'products_display',
@@ -172,14 +257,18 @@ class RecipeAdmin(admin.ModelAdmin):
         'author__username',
         'author__email',
         'tags__name',
-        'products__name',
+        'recipe_products__product__name',
     )
     list_filter = (
         'tags',
         'author',
+        'created_at',
         CookingTimeFilter,
     )
-    autocomplete_fields = ('author', 'tags')
+    autocomplete_fields = (
+        'author',
+        'tags',
+    )
     inlines = (RecipeProductInline,)
 
     def get_queryset(self, request):
@@ -192,33 +281,41 @@ class RecipeAdmin(admin.ModelAdmin):
             favorites_total=Count('favorites', distinct=True),
         )
 
+    @admin.display(description=mark_safe('Время<br>(мин)'))
+    def cooking_time_display(self, recipe):
+        return recipe.cooking_time
+
     @admin.display(description='В избранном')
     def favorites_count(self, recipe):
         return recipe.favorites_total
 
     @admin.display(description='Продукты')
     def products_display(self, recipe):
-        products = [
-            (
-                f'{recipe_product.product.name} — '
-                f'{recipe_product.amount} '
-                f'{recipe_product.product.measurement_unit}'
+        return mark_safe(
+            '<br>'.join(
+                (
+                    f'{recipe_product.product.name} — '
+                    f'{recipe_product.amount} '
+                    f'{recipe_product.product.measurement_unit}'
+                )
+                for recipe_product in recipe.recipe_products.all()
             )
-            for recipe_product in recipe.recipe_products.all()
-        ]
-
-        return mark_safe('<br>'.join(products))
+        )
 
     @admin.display(description='Теги')
     def tags_display(self, recipe):
         return mark_safe(
-            '<br>'.join(tag.name for tag in recipe.tags.all())
+            '<br>'.join(
+                tag.name
+                for tag in recipe.tags.all()
+            )
         )
 
     @admin.display(description='Картинка')
     def image_preview(self, recipe):
         if not recipe.image:
             return '-'
+
         return mark_safe(
             f'<img src="{recipe.image.url}" '
             f'width="80" height="80" '
@@ -226,8 +323,32 @@ class RecipeAdmin(admin.ModelAdmin):
         )
 
 
+@admin.register(RecipeProduct)
+class RecipeProductAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'recipe',
+        'product',
+        'amount',
+    )
+    search_fields = (
+        'recipe__name',
+        'product__name',
+    )
+    list_filter = (
+        'product__measurement_unit',
+        'recipe__tags',
+    )
+    autocomplete_fields = (
+        'recipe',
+        'product',
+    )
+
+
 @admin.register(Product)
 class ProductAdmin(RecipesCountAdminMixin, admin.ModelAdmin):
+    recipes_count_field = 'recipe_products__recipe'
+
     list_display = (
         'id',
         'name',
@@ -237,7 +358,7 @@ class ProductAdmin(RecipesCountAdminMixin, admin.ModelAdmin):
     search_fields = ('name',)
     list_filter = (
         'measurement_unit',
-        HasRecipesFilter,
+        ProductInRecipesFilter,
     )
 
 
@@ -279,6 +400,9 @@ class RecipeRelationAdmin(admin.ModelAdmin):
         'user__username',
         'user__email',
         'recipe__name',
+    )
+    list_filter = (
+        'recipe__tags',
     )
 
     def get_queryset(self, request):
