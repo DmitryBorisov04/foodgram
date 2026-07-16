@@ -33,7 +33,7 @@ class RecipeFilter(filters.FilterSet):
         if not user.is_authenticated:
             return queryset.none() if value else queryset
         if value:
-            return queryset.filter(shopping_cart__user=user)
+            return queryset.filter(shoppingcarts__user=user)
         return queryset
 
 

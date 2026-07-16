@@ -231,7 +231,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
         cart_items = request.user.shopping_cart.select_related('recipe')
 
         products = Product.objects.filter(
-            recipe_products__recipe__shopping_cart__user=request.user,
+            recipe_products__recipe__shoppingcarts__user=request.user,
         ).values(
             'name',
             'measurement_unit',
