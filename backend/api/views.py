@@ -161,7 +161,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
         return Response(
             {
                 'short-link': request.build_absolute_uri(
-                    reverse('short-link', kwargs={'pk': pk})
+                    reverse('short-link', kwargs={'recipe_id': pk})
                 )
             }
         )
