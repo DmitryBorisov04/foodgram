@@ -147,6 +147,9 @@ class RecipeViewSet(viewsets.ModelViewSet):
         if self.action in ('create', 'update', 'partial_update'):
             return RecipeWriteSerializer
         return RecipeReadSerializer
+    
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)
 
     @action(
         detail=True,
@@ -156,7 +159,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     )
     def get_link(self, request, pk=None):
         if not Recipe.objects.filter(pk=pk).exists():
-            raise NotFound(f'Рецепт {pk} не найден.')
+            raise NotFound(f'Рецепт с id {pk} не найден.')
 
         return Response(
             {

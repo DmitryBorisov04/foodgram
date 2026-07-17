@@ -229,7 +229,6 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         tags = validated_data.pop('tags')
         products_data = validated_data.pop('ingredients')
-        validated_data['author'] = self.context['request'].user
 
         recipe = super().create(validated_data)
         self.create_products(recipe, products_data)
@@ -238,10 +237,12 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         return recipe
 
     def update(self, instance, validated_data):
+        tags = validated_data.pop('tags')
         products_data = validated_data.pop('ingredients')
 
         instance.recipe_products.all().delete()
         self.create_products(instance, products_data)
+        instance.tags.set(tags)
 
         return super().update(instance, validated_data)
 

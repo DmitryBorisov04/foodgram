@@ -34,8 +34,6 @@ class HasRelatedFilter(admin.SimpleListFilter):
         return self.filter_choices
 
     def queryset(self, request, queryset):
-        if self.related_name is None:
-            return queryset
 
         if self.value() == 'yes':
             return queryset.filter(
@@ -257,7 +255,7 @@ class RecipeAdmin(admin.ModelAdmin):
         'author__username',
         'author__email',
         'tags__name',
-        'recipe_products__product__name',
+        'products',
     )
     list_filter = (
         'tags',
