@@ -173,8 +173,8 @@ class RecipeProduct(models.Model):
 
     def __str__(self):
         return (
-            f'{self.amount} {self.product.measurement_unit} '
-            f'{self.product.name} в {self.recipe.name}'
+            f'{self.product.name[:1].upper() + self.product.name[1:]} — '
+            f'{self.amount} {self.product.measurement_unit}'
         )
 
 

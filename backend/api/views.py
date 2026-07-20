@@ -1,5 +1,4 @@
-from django.db.models import Sum
-from django.http import HttpResponse
+from django.http import FileResponse
 from django.urls import reverse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -19,6 +18,7 @@ from recipes.models import (
     Tag,
     User,
 )
+from recipes.shopping_cart import get_shopping_cart_text
 from .filters import RecipeFilter, ProductFilter
 from .permissions import IsAuthorOrReadOnly
 from .serializers import (
@@ -64,19 +64,18 @@ class UserViewSet(DjoserUserViewSet):
         permission_classes=(IsAuthenticated,),
         serializer_class=SubscriptionUserSerializer,
     )
-    def subscribe(self, request, pk=None, id=None):
+    def subscribe(self, request, pk=None):
         user = request.user
-        author_id = id or pk
 
         if request.method == 'DELETE':
             get_object_or_404(
                 Subscription,
                 user=user,
-                author_id=author_id,
+                author_id=pk,
             ).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        author = get_object_or_404(User, pk=author_id)
+        author = self.get_object()
 
         if user == author:
             raise ValidationError(
@@ -142,7 +141,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     queryset = Recipe.objects.select_related('author').prefetch_related(
         'tags',
         'recipe_products__product',
-    ).order_by('-created_at')
+    )
     filter_backends = (DjangoFilterBackend,)
     filterset_class = RecipeFilter
 
@@ -234,29 +233,9 @@ class RecipeViewSet(viewsets.ModelViewSet):
         permission_classes=(IsAuthenticated,),
     )
     def download_shopping_cart(self, request):
-        products = Product.objects.filter(
-            recipe_products__recipe__shoppingcarts__user=request.user,
-        ).values(
-            'name',
-            'measurement_unit',
-        ).annotate(
-            total_amount=Sum('recipe_products__amount'),
-        ).order_by('name')
-
-        lines = ['Список покупок', '']
-
-        for product in products:
-            lines.append(
-                f'{product["name"]} '
-                f'({product["measurement_unit"]}) — '
-                f'{product["total_amount"]}'
-            )
-
-        response = HttpResponse(
-            '\n'.join(lines),
+        return FileResponse(
+            get_shopping_cart_text(request.user),
+            as_attachment=True,
+            filename='shopping_list.txt',
             content_type='text/plain; charset=utf-8',
         )
-        response['Content-Disposition'] = (
-            'attachment; filename="shopping_list.txt"'
-        )
-        return response
