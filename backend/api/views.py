@@ -51,7 +51,8 @@ class UserViewSet(DjoserUserViewSet):
     )
     def subscriptions(self, request):
         queryset = User.objects.filter(
-            subscribers__user=request.user)
+            author_subscriptions__user=request.user
+        )
 
         page = self.paginate_queryset(queryset)
         return self.get_paginated_response(

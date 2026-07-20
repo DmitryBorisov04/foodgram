@@ -267,6 +267,16 @@ class RecipeAdmin(admin.ModelAdmin):
         'author',
         'tags',
     )
+    readonly_fields = ('image_preview',)
+    fields = (
+        'author',
+        'name',
+        'text',
+        'image',
+        'image_preview',
+        'cooking_time',
+        'tags',
+    )
     inlines = (RecipeProductInline,)
 
     def get_queryset(self, request):
