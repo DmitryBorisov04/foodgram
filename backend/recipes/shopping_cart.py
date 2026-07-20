@@ -24,6 +24,15 @@ def get_report_date():
     return f'{date.day:02d} {MONTHS[date.month]} {date.year}'
 
 
+def get_product_name(product):
+    return product['name'][:1].upper() + product['name'][1:]
+
+
+def get_recipe_tags(recipe):
+    tags = ', '.join(tag.name for tag in recipe.tags.all())
+    return f' | теги: {tags}' if tags else ''
+
+
 def get_shopping_cart_text(user):
     products = Product.objects.filter(
         recipe_products__recipe__shoppingcarts__user=user,
@@ -44,13 +53,12 @@ def get_shopping_cart_text(user):
 
     return '\n'.join([
         'Список покупок',
-        f'Дата составления: {timezone.localdate().strftime("%d.%m.%Y")}',
+        f'Дата составления: {get_report_date()}',
         '',
         'Продукты:',
         *[
             (
-                f'{number}. '
-                f'{product["name"][:1].upper() + product["name"][1:]} '
+                f'{number}. {get_product_name(product)} '
                 f'({product["measurement_unit"]}) — '
                 f'{product["total_amount"]}'
             )
@@ -62,11 +70,7 @@ def get_shopping_cart_text(user):
             (
                 f'{number}. {recipe.name} — '
                 f'автор: {recipe.author.username}'
-                f'{
-                    f" | теги: {", ".join(
-                        tag.name for tag in recipe.tags.all())
-                    }" if recipe.tags.exists(
-                    ) else ""}'
+                f'{get_recipe_tags(recipe)}'
             )
             for number, recipe in enumerate(recipes, start=1)
         ],
