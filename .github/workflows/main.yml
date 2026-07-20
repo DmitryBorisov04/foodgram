@@ -64,10 +64,10 @@ jobs:
       - name: Build and push gateway image
         uses: docker/build-push-action@v5
         with:
-        context: .
-        file: ./gateway/Dockerfile
-        push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/foodgram_gateway:latest
+          context: .
+          file: ./gateway/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/foodgram_gateway:latest
 
   deploy:
     name: Deploy to server
