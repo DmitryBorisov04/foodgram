@@ -62,8 +62,11 @@ def get_shopping_cart_text(user):
             (
                 f'{number}. {recipe.name} — '
                 f'автор: {recipe.author.username}'
-                f'{f" | теги: {", ".join(tag.name for tag in recipe.tags.all())}" if recipe.tags.exists(
-                ) else ""}'
+                f'{
+                    f" | теги: {", ".join(
+                        tag.name for tag in recipe.tags.all())
+                    }" if recipe.tags.exists(
+                    ) else ""}'
             )
             for number, recipe in enumerate(recipes, start=1)
         ],
