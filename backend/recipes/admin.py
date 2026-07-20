@@ -316,7 +316,7 @@ class RecipeAdmin(admin.ModelAdmin):
 
         return mark_safe(
             f'<img src="{recipe.image.url}" '
-            f'width="80" height="80" '
+            f'width="250" '
             f'style="object-fit: cover;" />'
         )
 

@@ -64,9 +64,10 @@ jobs:
       - name: Build and push gateway image
         uses: docker/build-push-action@v5
         with:
-          context: ./gateway
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/foodgram_gateway:latest
+        context: .
+        file: ./gateway/Dockerfile
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/foodgram_gateway:latest
 
   deploy:
     name: Deploy to server
@@ -112,8 +113,7 @@ jobs:
           script: |
             cd foodgram
             sudo docker compose -f docker-compose.production.yml pull
-            sudo docker compose -f docker-compose.production.yml down
-            sudo docker compose -f docker-compose.production.yml up -d
+            sudo docker compose -f docker-compose.production.yml up -d --force-recreate
             sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py migrate
             sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py collectstatic --noinput
             sudo docker compose -f docker-compose.production.yml exec -T backend sh -c "rm -rf /backend_static/* && cp -r /app/collected_static/. /backend_static/"

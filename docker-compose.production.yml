@@ -1,5 +1,3 @@
-version: '3.8'
-
 volumes:
   pg_data:
   static:
@@ -13,6 +11,8 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: always
+    networks:
+      - foodgram_network
 
   backend:
     image: ${DOCKERHUB_USERNAME}/foodgram_backend:latest
@@ -23,12 +23,16 @@ services:
       - static:/backend_static
       - media:/app/media
     restart: always
+    networks:
+      - foodgram_network
 
   frontend:
     image: ${DOCKERHUB_USERNAME}/foodgram_frontend:latest
     volumes:
       - frontend_static:/frontend_static
     restart: "no"
+    networks:
+      - foodgram_network
 
   gateway:
     image: ${DOCKERHUB_USERNAME}/foodgram_gateway:latest
@@ -42,3 +46,8 @@ services:
       - media:/media
       - frontend_static:/usr/share/nginx/html
     restart: always
+    networks:
+      - foodgram_network
+
+networks:
+  foodgram_network:

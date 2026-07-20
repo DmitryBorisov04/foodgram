@@ -1,5 +1,5 @@
 from django.db.models import Sum
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.urls import reverse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -30,6 +30,7 @@ from .serializers import (
     RecipeWriteSerializer,
     SubscriptionUserSerializer,
     TagSerializer,
+    SubscriptionUserSerializer,
 )
 
 
@@ -89,9 +90,7 @@ class UserViewSet(DjoserUserViewSet):
 
         if not created:
             raise ValidationError(
-                {'errors': (
-                    f'Вы уже подписаны на пользователя {author.username}.'
-                )}
+                {'errors': f'Вы уже подписаны на пользователя {author.username}.'}
             )
 
         return Response(
@@ -139,7 +138,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     queryset = Recipe.objects.select_related('author').prefetch_related(
         'tags',
         'recipe_products__product',
-    )
+    ).order_by('-created_at')
     filter_backends = (DjangoFilterBackend,)
     filterset_class = RecipeFilter
 
@@ -231,8 +230,6 @@ class RecipeViewSet(viewsets.ModelViewSet):
         permission_classes=(IsAuthenticated,),
     )
     def download_shopping_cart(self, request):
-        cart_items = request.user.shopping_cart.select_related('recipe')
-
         products = Product.objects.filter(
             recipe_products__recipe__shoppingcarts__user=request.user,
         ).values(
@@ -242,9 +239,20 @@ class RecipeViewSet(viewsets.ModelViewSet):
             total_amount=Sum('recipe_products__amount'),
         ).order_by('name')
 
-        return FileResponse(
-            build_shopping_list(request.user, cart_items, products),
-            as_attachment=True,
-            filename='shopping_list.txt',
-            content_type='text/plain',
+        lines = ['Список покупок', '']
+
+        for product in products:
+            lines.append(
+                f'{product["name"]} '
+                f'({product["measurement_unit"]}) — '
+                f'{product["total_amount"]}'
+            )
+
+        response = HttpResponse(
+            '\n'.join(lines),
+            content_type='text/plain; charset=utf-8',
         )
+        response['Content-Disposition'] = (
+            'attachment; filename="shopping_list.txt"'
+        )
+        return response
