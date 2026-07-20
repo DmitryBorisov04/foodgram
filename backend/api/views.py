@@ -64,18 +64,19 @@ class UserViewSet(DjoserUserViewSet):
         permission_classes=(IsAuthenticated,),
         serializer_class=SubscriptionUserSerializer,
     )
-    def subscribe(self, request, pk=None):
+    def subscribe(self, request, pk=None, id=None):
         user = request.user
+        author_id = id or pk
 
         if request.method == 'DELETE':
             get_object_or_404(
                 Subscription,
                 user=user,
-                author_id=pk,
+                author_id=author_id,
             ).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        author = get_object_or_404(User, pk=pk)
+        author = get_object_or_404(User, pk=author_id)
 
         if user == author:
             raise ValidationError(
@@ -89,13 +90,17 @@ class UserViewSet(DjoserUserViewSet):
 
         if not created:
             raise ValidationError(
-                {'errors': f'Вы уже подписаны на пользователя {author.username}.'}
+                {
+                    'errors':
+                    f'Вы уже подписаны на пользователя {author.username}.'
+                }
             )
 
-        return Response(
-            self.get_serializer(author).data,
-            status=status.HTTP_201_CREATED,
+        serializer = SubscriptionUserSerializer(
+            author,
+            context={'request': request},
         )
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(
         detail=False,
