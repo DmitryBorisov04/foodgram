@@ -34,6 +34,7 @@ from .serializers import (
 
 class UserViewSet(DjoserUserViewSet):
     queryset = User.objects.all()
+    lookup_url_kwarg = 'pk'
 
     @action(
         detail=False,
