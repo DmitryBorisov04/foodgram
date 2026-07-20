@@ -66,16 +66,15 @@ class UserViewSet(DjoserUserViewSet):
     )
     def subscribe(self, request, pk=None):
         user = request.user
+        author = self.get_object()
 
         if request.method == 'DELETE':
             get_object_or_404(
                 Subscription,
                 user=user,
-                author_id=pk,
+                author=author,
             ).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-
-        author = self.get_object()
 
         if user == author:
             raise ValidationError(
