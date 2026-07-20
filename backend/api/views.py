@@ -1,5 +1,5 @@
 from django.db.models import Sum
-from django.http import FileResponse, HttpResponse
+from django.http import HttpResponse
 from django.urls import reverse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -19,7 +19,6 @@ from recipes.models import (
     Tag,
     User,
 )
-from .services import build_shopping_list
 from .filters import RecipeFilter, ProductFilter
 from .permissions import IsAuthorOrReadOnly
 from .serializers import (
@@ -30,7 +29,6 @@ from .serializers import (
     RecipeWriteSerializer,
     SubscriptionUserSerializer,
     TagSerializer,
-    SubscriptionUserSerializer,
 )
 
 
